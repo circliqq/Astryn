@@ -74,7 +74,7 @@ export default function LogsPage() {
   }, [task]);
 
   useEffect(() => {
-    const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+    const API = process.env.NEXT_PUBLIC_API_URL ?? window.location.origin;
     const socket = io(`${API}/events`);
     socket.on("task.log.created", (payload: { message: string }) => {
       setLiveLogs((prev) => [...prev, payload.message]);

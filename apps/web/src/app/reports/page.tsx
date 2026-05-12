@@ -97,7 +97,7 @@ export default function ReportsPage() {
     queryFn: () => apiFetch<Wallet[]>("/wallets"),
   });
 
-  const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+  const API = process.env.NEXT_PUBLIC_API_URL ?? window.location.origin;
   const walletMap = new Map(wallets.map((wallet) => [wallet.id, wallet]));
   const report = task?.report;
   const transactions = task?.transactions ?? [];
