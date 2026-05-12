@@ -11,7 +11,7 @@ RUN pnpm install --frozen-lockfile=false
 
 FROM deps AS build
 COPY . .
-RUN pnpm -r build
+RUN pnpm --filter './packages/**' build && pnpm --filter @mint-copilot/worker build
 
 FROM base AS runner
 ENV NODE_ENV=production
