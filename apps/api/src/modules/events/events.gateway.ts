@@ -3,6 +3,7 @@ import { Server } from "socket.io";
 
 export type MintEventName =
   | "task.status.updated"
+  | "task.flip.queued"
   | "task.wallet.gas.updated"
   | "task.log.created"
   | "transaction.updated"
