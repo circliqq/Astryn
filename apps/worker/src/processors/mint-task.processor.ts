@@ -26,7 +26,58 @@ import {
 import { logger } from "@mint-copilot/logger";
 import { keccak256, toBytes, type Hex } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import type { EligibilityResult, MintPayload } from "@mint-copilot/opensea";
+import type { EligibilityResult, MintPayload, SeaportOrderParameters } from "@mint-copilot/opensea";
+
+// ── Seaport constants ─────────────────────────────────────────────────────────
+const SEAPORT_V15_ADDRESS = "0x0000000000000068F116a894984e2DB1123eB395" as `0x${string}`;
+const OPENSEA_CONDUIT_KEY = "0x0000007b02230091a7ed01230072f7006a004d60a8d4e71d599b8104250f0000" as `0x${string}`;
+const OPENSEA_FEE_RECIPIENT = "0x0000a26b00c1F0DF003000390027140000fAa719" as `0x${string}`;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000" as `0x${string}`;
+const ZERO_BYTES32 = "0x0000000000000000000000000000000000000000000000000000000000000000" as `0x${string}`;
+const SEAPORT_CHAIN_IDS: Record<string, number> = { ethereum: 1, base: 8453 };
+const OPENSEA_FEE_BPS = 250n; // 2.5%
+const TRANSFER_EVENT_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+const SEAPORT_GET_COUNTER_ABI = [
+  {
+    name: "getCounter",
+    type: "function",
+    stateMutability: "view",
+    inputs: [{ name: "offerer", type: "address" }],
+    outputs: [{ name: "counter", type: "uint256" }],
+  },
+] as const;
+
+const SEAPORT_EIP712_TYPES = {
+  OrderComponents: [
+    { name: "offerer", type: "address" },
+    { name: "zone", type: "address" },
+    { name: "offer", type: "OfferItem[]" },
+    { name: "consideration", type: "ConsiderationItem[]" },
+    { name: "orderType", type: "uint8" },
+    { name: "startTime", type: "uint256" },
+    { name: "endTime", type: "uint256" },
+    { name: "zoneHash", type: "bytes32" },
+    { name: "salt", type: "uint256" },
+    { name: "conduitKey", type: "bytes32" },
+    { name: "counter", type: "uint256" },
+  ],
+  OfferItem: [
+    { name: "itemType", type: "uint8" },
+    { name: "token", type: "address" },
+    { name: "identifierOrCriteria", type: "uint256" },
+    { name: "startAmount", type: "uint256" },
+    { name: "endAmount", type: "uint256" },
+  ],
+  ConsiderationItem: [
+    { name: "itemType", type: "uint8" },
+    { name: "token", type: "address" },
+    { name: "identifierOrCriteria", type: "uint256" },
+    { name: "startAmount", type: "uint256" },
+    { name: "endAmount", type: "uint256" },
+    { name: "recipient", type: "address" },
+  ],
+} as const;
 
 interface MintTaskJob {
   taskId: string;
@@ -74,12 +125,18 @@ interface PriorityMintingSettings {
 
 interface InstantFlipperSettings {
   enabled?: boolean;
+  mode?: "auto" | "manual";
   priceMode?: "floor_percent" | "fixed";
   floorMultiplier?: number;
   fixedPriceEth?: number;
   minPriceEth?: number;
   maxPerWallet?: number;
 }
+
+type ReceiptOutcome =
+  | { status: "confirmed"; tokenIds: bigint[] }
+  | { status: "pending" }
+  | { status: "failed" };
 
 export async function executeMintTask(
   job: Job<MintTaskJob>,
@@ -506,8 +563,8 @@ export async function executeMintTask(
       return;
     }
 
-    const receiptResults = await Promise.all(
-      broadcasted.map(async (item) => {
+    const receiptResults: ReceiptOutcome[] = await Promise.all(
+      broadcasted.map(async (item): Promise<ReceiptOutcome> => {
         try {
           await prisma.transaction.update({
             where: { id: item.transactionId },
@@ -541,7 +598,8 @@ export async function executeMintTask(
           if (txStatus !== "CONFIRMED") {
             throw new Error("Transaction failed on-chain.");
           }
-          return "confirmed" as const;
+          const tokenIds = extractTransferTokenIds(receipt.logs, item.walletAddress);
+          return { status: "confirmed", tokenIds };
         } catch (error) {
           const pending = isReceiptPending(error);
           await prisma.transaction
@@ -576,18 +634,21 @@ export async function executeMintTask(
               rawError: rawErrorMessage(error),
             },
           ).catch(() => undefined);
-          return pending ? ("pending" as const) : ("failed" as const);
+          return pending ? { status: "pending" } : { status: "failed" };
         }
       }),
     );
 
-    const acceptedMints = receiptResults.filter((result) => result !== "failed").length;
-    const confirmedMints = receiptResults.filter((result) => result === "confirmed").length;
+    const acceptedMints = receiptResults.filter((r) => r.status !== "failed").length;
+    const confirmedMints = receiptResults.filter((r) => r.status === "confirmed").length;
     await queueInstantFlipperIntents(
       prisma,
       openSea,
       task.id,
       task.collection.slug,
+      task.collection.contractAddress,
+      network,
+      primary.url,
       task.instantFlipperJson,
       broadcasted,
       receiptResults,
@@ -1289,16 +1350,30 @@ async function queueInstantFlipperIntents(
   openSea: OpenSeaClient,
   taskId: string,
   collectionSlug: string,
+  contractAddress: string,
+  network: "ethereum" | "base",
+  rpcUrl: string,
   rawSettings: unknown,
   broadcasted: BroadcastedMint[],
-  receiptResults: Array<"confirmed" | "pending" | "failed">,
+  receiptResults: ReceiptOutcome[],
 ) {
   const settings = resolveInstantFlipper(rawSettings);
   if (!settings.enabled) return;
 
-  const confirmed = broadcasted.filter((_, index) => receiptResults[index] === "confirmed");
-  if (confirmed.length === 0) {
-    await log(prisma, taskId, "warn", "Instant Flipper is enabled, but no confirmed mints were available to list.");
+  // Manual mode: user presses "Flip Now" — don't auto-list here
+  if (settings.mode === "manual") {
+    await log(prisma, taskId, "info", "Instant Flipper is in manual mode. Press Flip Now on the task to list.");
+    return;
+  }
+
+  const confirmedItems = broadcasted
+    .map((item, i) => ({ item, outcome: receiptResults[i] }))
+    .filter((x): x is { item: BroadcastedMint; outcome: Extract<ReceiptOutcome, { status: "confirmed" }> } =>
+      x.outcome?.status === "confirmed",
+    );
+
+  if (confirmedItems.length === 0) {
+    await log(prisma, taskId, "warn", "Instant Flipper: no confirmed mints to list.");
     return;
   }
 
@@ -1314,39 +1389,320 @@ async function queueInstantFlipperIntents(
 
   const targetPriceEth = resolveFlipperPrice(settings, floorPriceEth);
   if (targetPriceEth == null) {
-    await log(
-      prisma,
-      taskId,
-      "warn",
-      "Instant Flipper skipped listing because neither floor price nor fixed price was available.",
-      { floorPriceEth, settings },
-    );
+    await log(prisma, taskId, "warn", "Instant Flipper: no valid price available. Set a fixed price or ensure floor price is available.", { floorPriceEth });
     return;
   }
 
-  for (const item of confirmed) {
-    const listQuantity = Math.min(item.quantity, settings.maxPerWallet ?? item.quantity);
-    await log(
-      prisma,
-      taskId,
-      "info",
-      `Instant Flipper queued ${listQuantity} listing intent(s) for ${shortAddress(item.walletAddress)} at ${targetPriceEth.toFixed(5)} ETH.`,
-      {
-        walletId: item.walletId,
-        txHash: item.hash,
-        listQuantity,
-        targetPriceEth,
-        floorPriceEth,
-        mode: settings.priceMode ?? "floor_percent",
-      },
-    );
+  const client = createMintPublicClient({ chainName: network, rpcUrl });
+
+  for (const { item, outcome } of confirmedItems) {
+    const maxToList = settings.maxPerWallet ?? outcome.tokenIds.length;
+    const tokenIds = outcome.tokenIds.slice(0, maxToList);
+
+    if (tokenIds.length === 0) {
+      await log(prisma, taskId, "warn", `Instant Flipper: no Transfer events found for ${shortAddress(item.walletAddress)}.`);
+      continue;
+    }
+
+    const privateKey = await decryptPrivateKey(item.walletCrypto, {
+      masterKey: env("ENCRYPTION_MASTER_KEY"),
+    }).catch(() => null);
+
+    if (!privateKey) {
+      await log(prisma, taskId, "error", `Instant Flipper: failed to decrypt key for ${shortAddress(item.walletAddress)}.`);
+      continue;
+    }
+
+    for (const tokenId of tokenIds) {
+      try {
+        await createSeaportListing(
+          openSea, client, network, contractAddress,
+          tokenId, targetPriceEth,
+          item.walletAddress, privateKey as `0x${string}`,
+        );
+        await log(prisma, taskId, "info",
+          `Instant Flipper listed token #${tokenId} for ${shortAddress(item.walletAddress)} at ${targetPriceEth.toFixed(5)} ETH.`,
+          { tokenId: tokenId.toString(), priceEth: targetPriceEth, walletId: item.walletId },
+        );
+      } catch (err) {
+        await log(prisma, taskId, "error",
+          `Instant Flipper failed to list token #${tokenId} for ${shortAddress(item.walletAddress)}: ${rawErrorMessage(err)}`,
+          { tokenId: tokenId.toString(), rawError: rawErrorMessage(err) },
+        );
+      }
+    }
   }
+}
+
+// ── Manual flip job (triggered by "Flip Now" button) ─────────────────────────
+
+interface InstantFlipJob {
+  taskId: string;
+  manual?: boolean;
+}
+
+export async function executeInstantFlipJob(
+  job: Job<InstantFlipJob>,
+  prisma: PrismaClient,
+) {
+  const { taskId } = job.data;
+
+  const task = await prisma.mintTask.findUniqueOrThrow({
+    where: { id: taskId },
+    include: {
+      collection: true,
+      wallets: { include: { wallet: true } },
+    },
+  });
+
+  const openSea = new OpenSeaClient({ apiKey: env("OPENSEA_API_KEY") });
+  const network = task.collection.chain === "BASE" ? "base" : "ethereum";
+  const rpcUrls = rpcUrlsFor(network);
+  const rpcUrl = rpcUrls[0] ?? "";
+  const client = createMintPublicClient({ chainName: network, rpcUrl });
+
+  const settings = resolveInstantFlipper(task.instantFlipperJson);
+  if (!settings.enabled) {
+    await log(prisma, taskId, "warn", "Instant Flipper is not enabled on this task.");
+    return;
+  }
+
+  // Fetch floor price
+  let floorPriceEth: number | null = null;
+  try {
+    const stats = await openSea.getCollectionStats(task.collection.slug);
+    floorPriceEth = stats.floorPriceEth ? Number(stats.floorPriceEth) : null;
+  } catch {
+    await log(prisma, taskId, "warn", "Instant Flipper could not load OpenSea floor price.");
+  }
+
+  const targetPriceEth = resolveFlipperPrice(settings, floorPriceEth);
+  if (targetPriceEth == null) {
+    await log(prisma, taskId, "warn", "Instant Flipper: no valid price. Set a fixed price or ensure floor is available.", { floorPriceEth });
+    return;
+  }
+
+  await log(prisma, taskId, "info", `Instant Flipper (manual) starting. Target price: ${targetPriceEth.toFixed(5)} ETH.`);
+
+  // Find confirmed transactions for this task
+  const transactions = await prisma.transaction.findMany({
+    where: { mintTaskId: taskId, status: "CONFIRMED" },
+    select: { txHash: true, walletId: true },
+  });
+
+  if (transactions.length === 0) {
+    await log(prisma, taskId, "warn", "Instant Flipper: no confirmed transactions found for this task.");
+    return;
+  }
+
+  for (const tx of transactions) {
+    if (!tx.txHash) continue;
+
+    const taskWallet = task.wallets.find((w) => w.walletId === tx.walletId);
+    if (!taskWallet) continue;
+
+    const wallet = taskWallet.wallet;
+
+    try {
+      const receipt = await client.getTransactionReceipt({ hash: tx.txHash as `0x${string}` });
+      const tokenIds = extractTransferTokenIds(receipt.logs, wallet.address as `0x${string}`);
+
+      if (tokenIds.length === 0) {
+        await log(prisma, taskId, "warn", `Instant Flipper: no Transfer events found for ${shortAddress(wallet.address)}.`);
+        continue;
+      }
+
+      const maxToList = settings.maxPerWallet ?? tokenIds.length;
+      const toList = tokenIds.slice(0, maxToList);
+
+      const privateKey = await decryptPrivateKey(
+        {
+          encryptedPrivateKey: wallet.encryptedPrivateKey,
+          encryptionSalt: wallet.encryptionSalt,
+          encryptionIv: wallet.encryptionIv,
+          encryptionAuthTag: wallet.encryptionAuthTag,
+          encryptionVersion: wallet.encryptionVersion,
+        },
+        { masterKey: env("ENCRYPTION_MASTER_KEY") },
+      );
+
+      for (const tokenId of toList) {
+        try {
+          await createSeaportListing(
+            openSea, client, network,
+            task.collection.contractAddress,
+            tokenId, targetPriceEth,
+            wallet.address as `0x${string}`,
+            privateKey as `0x${string}`,
+          );
+          await log(prisma, taskId, "info",
+            `Instant Flipper listed token #${tokenId} for ${shortAddress(wallet.address)} at ${targetPriceEth.toFixed(5)} ETH.`,
+            { tokenId: tokenId.toString(), priceEth: targetPriceEth },
+          );
+        } catch (err) {
+          await log(prisma, taskId, "error",
+            `Instant Flipper failed to list token #${tokenId}: ${rawErrorMessage(err)}`,
+            { tokenId: tokenId.toString(), rawError: rawErrorMessage(err) },
+          );
+        }
+      }
+    } catch (err) {
+      await log(prisma, taskId, "error",
+        `Instant Flipper failed to process tx for ${shortAddress(wallet.address)}: ${rawErrorMessage(err)}`,
+        { txHash: tx.txHash, rawError: rawErrorMessage(err) },
+      );
+    }
+  }
+}
+
+// ── Seaport listing helpers ───────────────────────────────────────────────────
+
+function extractTransferTokenIds(
+  logs: readonly { topics: readonly string[] }[],
+  walletAddress: `0x${string}`,
+): bigint[] {
+  const walletTopic = `0x${walletAddress.slice(2).toLowerCase().padStart(64, "0")}`;
+  return logs
+    .filter(
+      (log) =>
+        log.topics[0]?.toLowerCase() === TRANSFER_EVENT_TOPIC &&
+        log.topics[2]?.toLowerCase() === walletTopic &&
+        log.topics[3] != null,
+    )
+    .map((log) => BigInt(log.topics[3] as string));
+}
+
+async function createSeaportListing(
+  openSea: OpenSeaClient,
+  client: ReturnType<typeof createMintPublicClient>,
+  network: "ethereum" | "base",
+  contractAddress: string,
+  tokenId: bigint,
+  priceEth: number,
+  walletAddress: `0x${string}`,
+  privateKey: `0x${string}`,
+): Promise<void> {
+  const chainId = SEAPORT_CHAIN_IDS[network] ?? 1;
+  const priceWei = BigInt(Math.round(priceEth * 1e18));
+  const feeAmount = (priceWei * OPENSEA_FEE_BPS) / 10_000n;
+  const sellerAmount = priceWei - feeAmount;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const startTime = BigInt(nowSec);
+  const endTime = BigInt(nowSec + 7 * 24 * 3600); // 7 days
+  const salt = BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
+
+  // Get Seaport order counter from chain
+  const counter = await client.readContract({
+    address: SEAPORT_V15_ADDRESS,
+    abi: SEAPORT_GET_COUNTER_ABI,
+    functionName: "getCounter",
+    args: [walletAddress],
+  });
+
+  // Build EIP-712 message (bigint for uint256, hex for bytes32/address)
+  const message = {
+    offerer: walletAddress,
+    zone: ZERO_ADDRESS,
+    offer: [
+      {
+        itemType: 2, // ERC721
+        token: contractAddress as `0x${string}`,
+        identifierOrCriteria: tokenId,
+        startAmount: 1n,
+        endAmount: 1n,
+      },
+    ],
+    consideration: [
+      {
+        itemType: 0, // NATIVE
+        token: ZERO_ADDRESS,
+        identifierOrCriteria: 0n,
+        startAmount: sellerAmount,
+        endAmount: sellerAmount,
+        recipient: walletAddress,
+      },
+      {
+        itemType: 0, // NATIVE — OpenSea fee
+        token: ZERO_ADDRESS,
+        identifierOrCriteria: 0n,
+        startAmount: feeAmount,
+        endAmount: feeAmount,
+        recipient: OPENSEA_FEE_RECIPIENT,
+      },
+    ],
+    orderType: 0, // FULL_OPEN
+    startTime,
+    endTime,
+    zoneHash: ZERO_BYTES32,
+    salt,
+    conduitKey: OPENSEA_CONDUIT_KEY,
+    counter,
+  };
+
+  const account = privateKeyToAccount(privateKey);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const signature = await account.signTypedData({
+    domain: {
+      name: "Seaport",
+      version: "1.5",
+      chainId,
+      verifyingContract: SEAPORT_V15_ADDRESS,
+    },
+    types: SEAPORT_EIP712_TYPES,
+    primaryType: "OrderComponents",
+    message,
+  } as Parameters<typeof account.signTypedData>[0]);
+
+  // Build string-form parameters for the OpenSea API
+  const parameters: SeaportOrderParameters = {
+    offerer: walletAddress,
+    zone: ZERO_ADDRESS,
+    offer: [
+      {
+        itemType: 2,
+        token: contractAddress,
+        identifierOrCriteria: tokenId.toString(),
+        startAmount: "1",
+        endAmount: "1",
+      },
+    ],
+    consideration: [
+      {
+        itemType: 0,
+        token: ZERO_ADDRESS,
+        identifierOrCriteria: "0",
+        startAmount: sellerAmount.toString(),
+        endAmount: sellerAmount.toString(),
+        recipient: walletAddress,
+      },
+      {
+        itemType: 0,
+        token: ZERO_ADDRESS,
+        identifierOrCriteria: "0",
+        startAmount: feeAmount.toString(),
+        endAmount: feeAmount.toString(),
+        recipient: OPENSEA_FEE_RECIPIENT,
+      },
+    ],
+    orderType: 0,
+    startTime: startTime.toString(),
+    endTime: endTime.toString(),
+    zoneHash: ZERO_BYTES32,
+    salt: salt.toString(),
+    conduitKey: OPENSEA_CONDUIT_KEY,
+    counter: counter.toString(),
+    totalOriginalConsiderationItems: 2,
+  };
+
+  await openSea.postSeaportListing(network, parameters, signature);
 }
 
 function resolveInstantFlipper(raw: unknown): InstantFlipperSettings {
   if (!isRecord(raw)) return { enabled: false };
   return {
     enabled: Boolean(raw.enabled),
+    mode: raw.mode === "manual" ? "manual" : "auto",
     priceMode: raw.priceMode === "fixed" ? "fixed" : "floor_percent",
     floorMultiplier: numberOrUndefined(raw.floorMultiplier),
     fixedPriceEth: numberOrUndefined(raw.fixedPriceEth),

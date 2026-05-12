@@ -6,7 +6,7 @@ import { QueueEvents, Worker } from "bullmq";
 import { Redis } from "ioredis";
 import { PrismaClient } from "@prisma/client";
 import { logger } from "@mint-copilot/logger";
-import { executeMintTask } from "./processors/mint-task.processor.js";
+import { executeMintTask, executeInstantFlipJob } from "./processors/mint-task.processor.js";
 import { processRpcHealth } from "./processors/rpc-health.processor.js";
 import { processReport } from "./processors/report.processor.js";
 import { processFunding } from "./processors/funding.processor.js";
@@ -29,10 +29,14 @@ const prisma = new PrismaClient();
 const workerId = `${os.hostname()}-${process.pid}`;
 
 const workers = [
-  new Worker("mint-task-queue", (job) => executeMintTask(job, prisma), {
-    connection,
-    concurrency: 3,
-  }),
+  new Worker(
+    "mint-task-queue",
+    (job) => {
+      if (job.name === "instant-flip") return executeInstantFlipJob(job, prisma);
+      return executeMintTask(job, prisma);
+    },
+    { connection, concurrency: 3 },
+  ),
   new Worker("rpc-health-queue", (job) => processRpcHealth(job, prisma), {
     connection,
     concurrency: 5,

@@ -59,6 +59,33 @@ export interface OpenSeaMintParams {
   restrictFeeRecipients: boolean;
 }
 
+export interface SeaportItem {
+  itemType: number;
+  token: string;
+  identifierOrCriteria: string;
+  startAmount: string;
+  endAmount: string;
+}
+
+export interface SeaportConsiderationItem extends SeaportItem {
+  recipient: string;
+}
+
+export interface SeaportOrderParameters {
+  offerer: string;
+  zone: string;
+  offer: SeaportItem[];
+  consideration: SeaportConsiderationItem[];
+  orderType: number;
+  startTime: string;
+  endTime: string;
+  zoneHash: string;
+  salt: string;
+  conduitKey: string;
+  counter: string;
+  totalOriginalConsiderationItems: number;
+}
+
 export interface OpenSeaClientOptions {
   apiKey: string;
   baseUrl?: string;
@@ -234,6 +261,17 @@ export class OpenSeaClient {
       signature,
       payload
     };
+  }
+
+  async postSeaportListing(
+    chain: "ethereum" | "base",
+    parameters: SeaportOrderParameters,
+    signature: string,
+  ): Promise<void> {
+    await this.request<unknown>(`/orders/${chain}/seaport/listings`, {
+      method: "POST",
+      body: JSON.stringify({ parameters, signature }),
+    });
   }
 
   async getMintPayload(
