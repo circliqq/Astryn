@@ -1,4 +1,9 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? (typeof window !== "undefined" ? window.location.origin : "http://localhost:4000");
+// Client-side: use relative URL so nginx routes /api/ → api container automatically.
+// Server-side (SSR): use API_URL (internal docker network) or localhost fallback.
+const BASE =
+  typeof window !== "undefined"
+    ? ""
+    : (process.env.API_URL ?? "http://localhost:4000");
 
 export function getToken(): string {
   if (typeof window === "undefined") return "";
