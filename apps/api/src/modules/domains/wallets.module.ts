@@ -15,7 +15,7 @@ class ImportWalletDto {
   name!: string;
 
   @IsString()
-  privateKey!: `0x${string}`;
+  privateKey!: string;
 
   @IsIn(["base", "ethereum"])
   network!: "base" | "ethereum";
@@ -50,6 +50,21 @@ const networkMap = {
   base: "BASE",
   ethereum: "ETHEREUM"
 } as const;
+
+function normalizePrivateKey(privateKey: string): `0x${string}` {
+  const trimmed = privateKey.trim().replace(/\s+/g, "");
+  const normalized = /^0x/i.test(trimmed) ? `0x${trimmed.slice(2)}` : `0x${trimmed}`;
+
+  if (!/^0x[a-fA-F0-9]{64}$/.test(normalized)) {
+    throw new BadRequestException("Private key must be 64 hex characters, with or without 0x.");
+  }
+
+  return normalized as `0x${string}`;
+}
+
+function isUniqueConstraintError(error: unknown): error is { code: "P2002" } {
+  return typeof error === "object" && error !== null && "code" in error && error.code === "P2002";
+}
 
 const safeWalletSelect = {
   id: true,
@@ -110,20 +125,49 @@ class WalletsController {
 
   @Post("import")
   async importWallet(@CurrentUser() user: CurrentUserType, @Body() body: ImportWalletDto) {
-    const account = privateKeyToAccount(body.privateKey);
-    const encrypted = await encryptPrivateKey(body.privateKey, {
+    const name = body.name.trim();
+    if (!name) throw new BadRequestException("Wallet name is required.");
+
+    const privateKey = normalizePrivateKey(body.privateKey);
+    let account: ReturnType<typeof privateKeyToAccount>;
+
+    try {
+      account = privateKeyToAccount(privateKey);
+    } catch {
+      throw new BadRequestException("Private key is not a valid Ethereum wallet key.");
+    }
+
+    const network = networkMap[body.network];
+    const existingWallet = await this.prisma.wallet.findFirst({
+      where: { userId: user.id, address: account.address, network },
+      select: { id: true }
+    });
+
+    if (existingWallet) {
+      throw new BadRequestException("This wallet is already imported for that network.");
+    }
+
+    const encrypted = await encryptPrivateKey(privateKey, {
       masterKey: this.config.getOrThrow<string>("ENCRYPTION_MASTER_KEY")
     });
-    return this.prisma.wallet.create({
-      data: {
-        userId: user.id,
-        name: body.name,
-        address: account.address,
-        network: networkMap[body.network],
-        ...encrypted
-      },
-      select: safeWalletSelect
-    });
+
+    try {
+      return await this.prisma.wallet.create({
+        data: {
+          userId: user.id,
+          name,
+          address: account.address,
+          network,
+          ...encrypted
+        },
+        select: safeWalletSelect
+      });
+    } catch (error) {
+      if (isUniqueConstraintError(error)) {
+        throw new BadRequestException("This wallet is already imported for that network.");
+      }
+      throw error;
+    }
   }
 
   @Post("bulk-import")

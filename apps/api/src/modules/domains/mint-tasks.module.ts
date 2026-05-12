@@ -370,6 +370,45 @@ class MintTasksController {
     return task;
   }
 
+  @Post(":id/flip")
+  async flip(@CurrentUser() user: CurrentUserType, @Param("id") id: string) {
+    const task = await this.prisma.mintTask.findFirstOrThrow({
+      where: { id, userId: user.id },
+      include: { collection: true, wallets: { include: { wallet: true } } }
+    });
+
+    if (task.status !== "COMPLETED") {
+      throw new BadRequestException("Only COMPLETED tasks can be flipped.");
+    }
+
+    const flipper = task.instantFlipperJson as Record<string, unknown> | null;
+    if (!flipper?.enabled) {
+      throw new BadRequestException("Instant Flipper is not enabled on this task.");
+    }
+
+    if (flipper.mode !== "manual") {
+      throw new BadRequestException("Use auto mode or wait — this task has auto-flip enabled.");
+    }
+
+    // Queue the flip job
+    const queue = new Queue("mint-task-queue", {
+      connection: { url: this.config.getOrThrow<string>("REDIS_URL") }
+    });
+
+    try {
+      await queue.add(
+        "instant-flip",
+        { taskId: task.id, manual: true },
+        { jobId: `flip-${task.id}-${Date.now()}`, attempts: 2 }
+      );
+    } finally {
+      await queue.close().catch(() => undefined);
+    }
+
+    this.events.publish("task.flip.queued", { taskId: task.id });
+    return { ok: true, message: "Flip job queued. NFTs will be listed on OpenSea shortly." };
+  }
+
   @Post(":id/retry")
   async retry(@CurrentUser() user: CurrentUserType, @Param("id") id: string) {
     const existing = await this.prisma.mintTask.findFirstOrThrow({

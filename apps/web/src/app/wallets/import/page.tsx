@@ -13,6 +13,12 @@ interface WalletResponse {
   address: string;
 }
 
+function normalizePrivateKey(value: string): string | null {
+  const trimmed = value.trim().replace(/\s+/g, "");
+  const normalized = /^0x/i.test(trimmed) ? `0x${trimmed.slice(2)}` : `0x${trimmed}`;
+  return /^0x[a-fA-F0-9]{64}$/.test(normalized) ? normalized : null;
+}
+
 export default function WalletImportPage() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -23,15 +29,21 @@ export default function WalletImportPage() {
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setLoading(true);
     setError(null);
 
+    const normalizedPrivateKey = normalizePrivateKey(privateKey);
+    if (!normalizedPrivateKey) {
+      setError("Private key must be 64 hex characters, with or without 0x.");
+      return;
+    }
+
+    setLoading(true);
     try {
       await apiFetch<WalletResponse>("/wallets/import", {
         method: "POST",
         body: JSON.stringify({
           name: name.trim(),
-          privateKey: privateKey.trim(),
+          privateKey: normalizedPrivateKey,
           network
         })
       });

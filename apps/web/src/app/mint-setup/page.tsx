@@ -12,6 +12,7 @@ import {
   ClipboardList,
   ExternalLink,
   Flame,
+  Repeat2,
   WalletCards,
   Zap,
 } from "lucide-react";
@@ -120,6 +121,16 @@ function MintSetupContent() {
   const [scheduleAt, setScheduleAt] = useState("");
   const [message, setMessage] = useState<string | null>(null);
 
+  // ── Instant Flipper state ─────────────────────────────────────────────────
+  const [flipperEnabled, setFlipperEnabled]         = useState(false);
+  const [flipperOpen, setFlipperOpen]               = useState(false);
+  const [flipperMode, setFlipperMode]               = useState<"auto" | "manual">("auto");
+  const [flipperPriceMode, setFlipperPriceMode]     = useState<"floor_percent" | "fixed">("floor_percent");
+  const [flipperMultiplier, setFlipperMultiplier]   = useState("0.98");
+  const [flipperFixedPrice, setFlipperFixedPrice]   = useState("");
+  const [flipperMinPrice, setFlipperMinPrice]       = useState("");
+  const [flipperMaxPerWallet, setFlipperMaxPerWallet] = useState("1");
+
   // ── Data fetching ─────────────────────────────────────────────────────────────
 
   const { data: wallets = [] } = useQuery<Wallet[]>({
@@ -211,6 +222,15 @@ function MintSetupContent() {
               ? new Date(scheduleAt).toISOString()
               : undefined,
           mintQuantity: qty,
+          instantFlipper: flipperEnabled ? {
+            enabled: true,
+            mode: flipperMode,
+            priceMode: flipperPriceMode,
+            floorMultiplier: flipperPriceMode === "floor_percent" ? Number(flipperMultiplier) || 0.98 : undefined,
+            fixedPriceEth: flipperPriceMode === "fixed" ? Number(flipperFixedPrice) || undefined : undefined,
+            minPriceEth: flipperMinPrice ? Number(flipperMinPrice) : undefined,
+            maxPerWallet: Math.max(1, Number.parseInt(flipperMaxPerWallet, 10) || 1),
+          } : { enabled: false },
         }),
       }),
     onSuccess: (task) => {
@@ -630,6 +650,122 @@ function MintSetupContent() {
                   )}
                 </div>
               </div>
+            </Panel>
+
+            {/* ── Instant Flipper ── */}
+            <Panel>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between p-4"
+                onClick={() => setFlipperOpen((o) => !o)}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`grid size-8 place-items-center rounded-md ${flipperEnabled ? "bg-brand/20" : "bg-graphite-800"}`}>
+                    <Repeat2 size={15} className={flipperEnabled ? "text-brand" : "text-graphite-400"} />
+                  </div>
+                  <div className="text-left">
+                    <div className="flex items-center gap-2">
+                      <p className="text-[13px] font-semibold text-graphite-100">Instant Flipper</p>
+                      {flipperEnabled && (
+                        <Badge tone="green">{flipperMode === "auto" ? "Auto" : "Manual"}</Badge>
+                      )}
+                    </div>
+                    <p className="text-[11px] text-graphite-500">
+                      Auto-list minted NFTs on OpenSea after mint.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setFlipperEnabled((v) => !v); if (!flipperOpen) setFlipperOpen(true); }}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${flipperEnabled ? "bg-brand" : "bg-graphite-600"}`}
+                  >
+                    <span className={`inline-block size-3.5 rounded-full bg-white shadow transition-transform ${flipperEnabled ? "translate-x-4" : "translate-x-1"}`} />
+                  </button>
+                  {flipperOpen ? <ChevronUp size={14} className="text-graphite-400" /> : <ChevronDown size={14} className="text-graphite-400" />}
+                </div>
+              </button>
+
+              {flipperOpen && (
+                <div className="border-t border-graphite-700 px-4 pb-4 pt-4 space-y-3">
+                  {/* Mode */}
+                  <label>
+                    <span className="mb-1 block text-[11px] font-medium text-graphite-400">Flip Mode</span>
+                    <Select value={flipperMode} onChange={(e) => setFlipperMode(e.target.value as "auto" | "manual")}>
+                      <option value="auto">Auto — list immediately after mint confirms</option>
+                      <option value="manual">Manual — I'll trigger the flip myself</option>
+                    </Select>
+                  </label>
+
+                  {/* Price mode */}
+                  <label>
+                    <span className="mb-1 block text-[11px] font-medium text-graphite-400">Price Mode</span>
+                    <Select value={flipperPriceMode} onChange={(e) => setFlipperPriceMode(e.target.value as "floor_percent" | "fixed")}>
+                      <option value="floor_percent">Floor % — list at X% of current floor</option>
+                      <option value="fixed">Fixed — set exact ETH price</option>
+                    </Select>
+                  </label>
+
+                  {/* Floor multiplier or fixed price */}
+                  {flipperPriceMode === "floor_percent" ? (
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">
+                        Floor Multiplier <span className="text-graphite-500">(e.g. 0.98 = 98% of floor)</span>
+                      </span>
+                      <Input
+                        type="number" min="0.1" max="5" step="0.01"
+                        value={flipperMultiplier}
+                        onChange={(e) => setFlipperMultiplier(e.target.value)}
+                        placeholder="0.98"
+                      />
+                    </label>
+                  ) : (
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Fixed Price (ETH)</span>
+                      <Input
+                        type="number" min="0.0001" step="0.001"
+                        value={flipperFixedPrice}
+                        onChange={(e) => setFlipperFixedPrice(e.target.value)}
+                        placeholder="e.g. 0.05"
+                      />
+                    </label>
+                  )}
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">
+                        Min Price (ETH) <span className="text-graphite-500">(optional)</span>
+                      </span>
+                      <Input
+                        type="number" min="0" step="0.001"
+                        value={flipperMinPrice}
+                        onChange={(e) => setFlipperMinPrice(e.target.value)}
+                        placeholder="e.g. 0.01"
+                      />
+                    </label>
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">
+                        Max Qty per Wallet
+                      </span>
+                      <Input
+                        type="number" min="1" step="1"
+                        value={flipperMaxPerWallet}
+                        onChange={(e) => setFlipperMaxPerWallet(e.target.value)}
+                        placeholder="1"
+                      />
+                    </label>
+                  </div>
+
+                  {flipperEnabled && (
+                    <div className="rounded-md border border-brand/20 bg-brand/5 px-3 py-2 text-[11px] text-brand">
+                      {flipperMode === "auto"
+                        ? `After mint: auto-list up to ${flipperMaxPerWallet} NFT(s)/wallet at ${flipperPriceMode === "floor_percent" ? `${Number(flipperMultiplier) * 100}% of floor` : `${flipperFixedPrice || "—"} ETH`}${flipperMinPrice ? ` (min ${flipperMinPrice} ETH)` : ""}.`
+                        : `Manual mode: use "Flip Now" button in Mint Tasks after mint completes.`}
+                    </div>
+                  )}
+                </div>
+              )}
             </Panel>
 
             {/* ── Readiness + Cost Summary ── */}

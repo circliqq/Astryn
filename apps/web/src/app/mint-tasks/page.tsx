@@ -7,11 +7,13 @@ import {
   AlertCircle,
   Clock,
   ListTodo,
+  Loader2,
   Pause,
   Pencil,
   Play,
   Plus,
   RefreshCw,
+  Repeat2,
   Save,
   X,
   XCircle,
@@ -24,12 +26,23 @@ import { GAS_PRESETS, type GasMode } from "@/lib/gas-settings";
 type TaskStatus = "DRAFT" | "SCHEDULED" | "RUNNING" | "PAUSED" | "COMPLETED" | "FAILED" | "CANCELED";
 type PhaseType = "PUBLIC" | "ALLOWLIST" | "GTD" | "FCFS";
 
+interface InstantFlipperJson {
+  enabled?: boolean;
+  mode?: "auto" | "manual";
+  priceMode?: "floor_percent" | "fixed";
+  floorMultiplier?: number;
+  fixedPriceEth?: number;
+  minPriceEth?: number;
+  maxPerWallet?: number;
+}
+
 interface MintTask {
   id: string;
   status: TaskStatus;
   phaseType: PhaseType;
   mintQuantity: number;
   gasSettingsJson: { mode?: GasMode; maxFeeGwei?: number; priorityFeeGwei?: number } | null;
+  instantFlipperJson: InstantFlipperJson | null;
   scheduledAt: string | null;
   createdAt: string;
   collection: { id: string; name: string; chain: "BASE" | "ETHEREUM"; slug: string };
@@ -152,6 +165,21 @@ function TaskRow({ task, onRefresh }: { task: MintTask; onRefresh: () => void })
   const canCancel = !["CANCELED", "COMPLETED", "FAILED"].includes(task.status);
   const canEdit   = ["DRAFT", "SCHEDULED", "PAUSED"].includes(task.status);
 
+  const flipper = task.instantFlipperJson;
+  const flipperActive = flipper?.enabled === true;
+  const isManualFlip  = flipperActive && flipper?.mode === "manual";
+  const canFlip       = isManualFlip && task.status === "COMPLETED";
+
+  const flipMutation = useMutation({
+    mutationFn: () => apiFetch(`/mint-tasks/${task.id}/flip`, { method: "POST" }),
+    onSuccess: () => {
+      setError(null);
+      qc.invalidateQueries({ queryKey: ["mint-tasks"] });
+      onRefresh();
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : "Flip failed"),
+  });
+
   async function doAction(action: "pause" | "resume" | "cancel") {
     setPending(action);
     setError(null);
@@ -210,6 +238,12 @@ function TaskRow({ task, onRefresh }: { task: MintTask; onRefresh: () => void })
             <Badge tone={cfg.tone}>{cfg.label}</Badge>
             <Badge tone="blue">{task.collection.chain}</Badge>
             <span className="text-xs uppercase text-graphite-500">{task.phaseType}</span>
+            {flipperActive && (
+              <Badge tone={isManualFlip ? "yellow" : "green"}>
+                <Repeat2 size={10} className="mr-1 inline" />
+                {isManualFlip ? "Manual Flip" : "Auto Flip"}
+              </Badge>
+            )}
           </div>
           <p className="mt-2 font-semibold">{task.collection.name}</p>
           <div className="mt-2 flex flex-wrap gap-4 text-[12px] text-graphite-400">
@@ -253,6 +287,17 @@ function TaskRow({ task, onRefresh }: { task: MintTask; onRefresh: () => void })
           {canCancel && (
             <Button variant="secondary" onClick={() => doAction("cancel")} disabled={!!pending}>
               <XCircle size={14} /> {pending === "cancel" ? "Canceling…" : "Cancel"}
+            </Button>
+          )}
+          {canFlip && (
+            <Button
+              onClick={() => flipMutation.mutate()}
+              disabled={flipMutation.isPending || !!pending}
+              className="gap-1.5"
+            >
+              {flipMutation.isPending
+                ? <><Loader2 size={14} className="animate-spin" /> Flipping…</>
+                : <><Repeat2 size={14} /> Flip Now</>}
             </Button>
           )}
         </div>
