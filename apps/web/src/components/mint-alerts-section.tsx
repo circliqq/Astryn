@@ -41,6 +41,23 @@ const ALERT_OPTIONS: { minutes: number; label: string }[] = [
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+/** Extract the collection slug from a full OpenSea URL or return the raw input */
+function parseSlug(input: string): string {
+  const trimmed = input.trim();
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname.endsWith("opensea.io")) {
+      const parts = url.pathname.split("/").filter(Boolean);
+      // /collection/<slug> or /drops/<slug>
+      const idx = parts.findIndex((p) => p === "collection" || p === "drops");
+      if (idx >= 0 && parts[idx + 1]) return parts[idx + 1];
+    }
+  } catch {
+    // not a URL — use as-is
+  }
+  return trimmed.toLowerCase().replace(/\s+/g, "-");
+}
+
 function formatCountdown(mintStartTime: string): string {
   const diff = new Date(mintStartTime).getTime() - Date.now();
   if (diff <= 0) return "Mint started";
@@ -211,17 +228,19 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
   const [formError, setFormError]   = useState<string | null>(null);
 
   const mutation = useMutation({
-    mutationFn: () =>
-      apiFetch("/mint-alerts", {
+    mutationFn: () => {
+      const resolvedSlug = parseSlug(slug);
+      return apiFetch("/mint-alerts", {
         method: "POST",
         body: JSON.stringify({
-          collectionSlug: slug.trim(),
-          collectionName: name.trim() || slug.trim(),
+          collectionSlug: resolvedSlug,
+          collectionName: name.trim() || resolvedSlug,
           network,
           mintStartTime: new Date(mintTime).toISOString(),
           alertMinutes: selected,
         }),
-      }),
+      });
+    },
     onSuccess: () => {
       setSlug(""); setName(""); setMintTime("");
       setSelected([60, 30, 15, 5]);
@@ -283,7 +302,7 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
                 Collection Slug <span className="text-graphite-600">(OpenSea slug)</span>
               </span>
               <Input
-                placeholder="e.g. projectryujin"
+                placeholder="slug or opensea.io/collection/..."
                 value={slug}
                 onChange={(e) => setSlug(e.target.value)}
               />
