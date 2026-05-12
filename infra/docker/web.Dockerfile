@@ -6,6 +6,7 @@ FROM base AS deps
 COPY package.json pnpm-workspace.yaml turbo.json ./
 COPY apps/web/package.json apps/web/package.json
 COPY packages packages
+COPY prisma prisma
 RUN pnpm install --frozen-lockfile=false
 
 FROM deps AS build
