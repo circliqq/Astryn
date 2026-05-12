@@ -1,0 +1,639 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Network {
+  BASE
+  ETHEREUM
+}
+
+enum MintPhaseType {
+  PUBLIC
+  ALLOWLIST
+  GTD
+  FCFS
+}
+
+enum WalletStatus {
+  READY
+  LOW_BALANCE
+  NEED_FUNDING
+  NOT_ELIGIBLE
+  NONCE_ISSUE
+}
+
+enum MintTaskStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  FAILED
+  CANCELED
+}
+
+enum TransactionStatus {
+  WAITING
+  SIGNED
+  BROADCAST
+  PENDING
+  CONFIRMED
+  FAILED
+}
+
+enum RpcStatus {
+  HEALTHY
+  DEGRADED
+  OFFLINE
+}
+
+model User {
+  id              String             @id @default(uuid())
+  supabaseUserId  String             @unique
+  email           String             @unique
+  displayName     String?
+  role            String             @default("user")
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  sessions        Session[]
+  wallets         Wallet[]
+  walletGroups    WalletGroup[]
+  mintTasks       MintTask[]
+  rpcEndpoints    RpcEndpoint[]
+  fundingPlans    FundingPlan[]
+  auditLogs           SecurityAuditLog[]
+  consolidationRules  ConsolidationRule[]
+  txBundles          TxBundle[]
+  sniperTasks        SniperTask[]
+  notificationConfig NotificationConfig?
+  collectionWatches  CollectionWatch[]
+  portfolioItems     PortfolioItem[]
+  swapOrders         SwapOrder[]
+  sweepAlerts        SweepAlert[]
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  userId       String
+  refreshHash  String
+  userAgent    String?
+  ipAddress    String?
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Wallet {
+  id                    String                 @id @default(uuid())
+  userId                String
+  name                  String
+  address               String
+  network               Network
+  status                WalletStatus           @default(READY)
+  encryptedPrivateKey   String
+  encryptionSalt        String
+  encryptionIv          String
+  encryptionAuthTag     String
+  encryptionVersion     String
+  lastBalanceWei        String?
+  lastNonce             Int?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  groups                WalletGroupMember[]
+  taskWallets           MintTaskWallet[]
+  transactions          Transaction[]
+  healthChecks          WalletHealthCheck[]
+  simulationResults     SimulationResult[]
+  readinessScores       ReadinessScore[]
+  fundingPlanItems      FundingPlanItem[]
+  sniperTasks           SniperTask[]
+  swapOrders            SwapOrder[]
+
+  @@unique([userId, address, network])
+  @@index([userId, status])
+}
+
+model WalletGroup {
+  id        String              @id @default(uuid())
+  userId    String
+  name      String
+  createdAt DateTime            @default(now())
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  members   WalletGroupMember[]
+}
+
+model WalletGroupMember {
+  id            String      @id @default(uuid())
+  walletId      String
+  walletGroupId String
+  wallet        Wallet      @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  walletGroup   WalletGroup @relation(fields: [walletGroupId], references: [id], onDelete: Cascade)
+
+  @@unique([walletId, walletGroupId])
+}
+
+model Collection {
+  id              String      @id @default(uuid())
+  slug            String
+  name            String
+  imageUrl        String?
+  chain           Network
+  contractAddress String
+  mintPriceWei    String
+  supply          Int?
+  maxMint         Int?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  phases          MintPhase[]
+  mintTasks       MintTask[]
+
+  @@unique([slug, chain])
+  @@index([contractAddress, chain])
+}
+
+model MintPhase {
+  id             String        @id @default(uuid())
+  collectionId   String
+  phaseType      MintPhaseType
+  priceWei       String
+  startTime      DateTime
+  endTime        DateTime?
+  maxMint        Int?
+  allowlistRoot  String?
+  collection     Collection    @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+}
+
+model MintTask {
+  id              String             @id @default(uuid())
+  userId          String
+  collectionId    String
+  phaseType       MintPhaseType
+  status          MintTaskStatus      @default(DRAFT)
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  gasSettingsJson Json
+  mintQuantity    Int                @default(1)
+  priorityMintingJson Json?
+  instantFlipperJson Json?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  collection      Collection         @relation(fields: [collectionId], references: [id])
+  wallets         MintTaskWallet[]
+  transactions    Transaction[]
+  logs            TaskLog[]
+  simulations     SimulationResult[]
+  readinessScores ReadinessScore[]
+  report             PostMintReport?
+  bundles            TxBundle[]
+  botCompetitionLogs BotCompetitionLog[]
+}
+
+model MintTaskWallet {
+  id               String   @id @default(uuid())
+  mintTaskId       String
+  walletId         String
+  status           String   @default("waiting")
+  progress         Int      @default(0)
+  errorCode        String?
+  gasSettingsJson  Json?
+  mintQuantity     Int      @default(1)
+  priorityMint     Boolean  @default(false)
+  priorityRank     Int?
+  mintTask         MintTask @relation(fields: [mintTaskId], references: [id], onDelete: Cascade)
+  wallet           Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@unique([mintTaskId, walletId])
+}
+
+model Transaction {
+  id             String            @id @default(uuid())
+  mintTaskId     String
+  walletId       String
+  network        Network
+  status         TransactionStatus @default(WAITING)
+  txHash         String?
+  nonce          Int?
+  gasUsedWei     String?
+  gasFeeWei      String?
+  errorCode      String?
+  errorMessage   String?
+  confirmations  Int               @default(0)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  mintTask       MintTask          @relation(fields: [mintTaskId], references: [id], onDelete: Cascade)
+  wallet         Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+model TaskLog {
+  id          String   @id @default(uuid())
+  mintTaskId  String
+  level       String   @default("info")
+  message     String
+  contextJson Json?
+  createdAt   DateTime @default(now())
+  mintTask    MintTask @relation(fields: [mintTaskId], references: [id], onDelete: Cascade)
+
+  @@index([mintTaskId, createdAt])
+}
+
+model RpcEndpoint {
+  id          String         @id @default(uuid())
+  userId      String?
+  name        String
+  url         String
+  network     Network
+  priority    Int            @default(1)
+  enabled     Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  user        User?          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  healthLogs  RpcHealthLog[]
+}
+
+model RpcHealthLog {
+  id            String      @id @default(uuid())
+  rpcEndpointId String
+  status        RpcStatus
+  latencyMs     Int?
+  blockNumber   String?
+  checkedAt     DateTime    @default(now())
+  rpcEndpoint   RpcEndpoint @relation(fields: [rpcEndpointId], references: [id], onDelete: Cascade)
+}
+
+model GasSnapshot {
+  id                  String   @id @default(uuid())
+  network             Network
+  baseFeeWei          String
+  priorityFeeWei      String
+  maxFeeWei           String
+  createdAt           DateTime @default(now())
+}
+
+model WalletHealthCheck {
+  id              String   @id @default(uuid())
+  walletId        String
+  network         Network
+  funded          Boolean
+  nonceClean      Boolean
+  balanceWei      String
+  nonce           Int
+  warningsJson    Json
+  createdAt       DateTime @default(now())
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+model SimulationResult {
+  id              String   @id @default(uuid())
+  mintTaskId       String
+  walletId         String
+  passed          Boolean
+  estimatedGasWei String?
+  errorCode       String?
+  errorMessage    String?
+  createdAt       DateTime @default(now())
+  mintTask        MintTask @relation(fields: [mintTaskId], references: [id], onDelete: Cascade)
+  wallet          Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+model ReadinessScore {
+  id             String   @id @default(uuid())
+  mintTaskId      String
+  walletId        String
+  score          Int
+  level          String
+  breakdownJson  Json
+  blockersJson   Json
+  warningsJson   Json
+  createdAt      DateTime @default(now())
+  mintTask       MintTask @relation(fields: [mintTaskId], references: [id], onDelete: Cascade)
+  wallet         Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+model FundingPlan {
+  id              String            @id @default(uuid())
+  userId          String
+  network         Network
+  totalRequiredWei String
+  status          String            @default("draft")
+  createdAt       DateTime          @default(now())
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items           FundingPlanItem[]
+}
+
+model FundingPlanItem {
+  id                 String      @id @default(uuid())
+  fundingPlanId       String
+  walletId           String
+  requiredWei        String
+  reason             String
+  fundingPlan        FundingPlan @relation(fields: [fundingPlanId], references: [id], onDelete: Cascade)
+  wallet             Wallet      @relation(fields: [walletId], references: [id], onDelete: Cascade)
+}
+
+model PostMintReport {
+  id                     String   @id @default(uuid())
+  mintTaskId              String   @unique
+  totalWallets            Int
+  successfulMints         Int
+  failedMints             Int
+  totalGasSpentWei        String
+  avgConfirmationTimeSec  Float
+  failureReasonsJson      Json
+  txHashesJson            Json
+  createdAt               DateTime @default(now())
+  mintTask                MintTask @relation(fields: [mintTaskId], references: [id], onDelete: Cascade)
+}
+
+model SecurityAuditLog {
+  id          String   @id @default(uuid())
+  userId      String?
+  action      String
+  ipAddress   String?
+  userAgent   String?
+  metadataJson Json?
+  createdAt   DateTime @default(now())
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+}
+
+// ── Auto-Consolidation ────────────────────────────────────────────────────
+
+model ConsolidationRule {
+  id                String              @id @default(uuid())
+  userId            String
+  name              String              @default("My Cold Wallet")
+  coldWallet        String              // destination address (external)
+  network           Network
+  autoTrigger       Boolean             @default(false)
+  sourceWalletIds   String[]            // vault wallet IDs to sweep from
+  contractAddresses String[]            // ERC-721 contracts to watch; empty = all
+  enabled           Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  jobs              ConsolidationJob[]
+
+  @@index([userId])
+}
+
+model ConsolidationJob {
+  id            String             @id @default(uuid())
+  ruleId        String
+  status        String             @default("pending")  // pending | running | completed | failed | partial
+  triggeredBy   String             @default("manual")   // manual | auto
+  transferCount Int                @default(0)
+  errorMessage  String?
+  transfersJson Json?              // [{contract, tokenId, fromWallet, toWallet, txHash, status}]
+  createdAt     DateTime           @default(now())
+  completedAt   DateTime?
+  rule          ConsolidationRule  @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([ruleId, createdAt])
+}
+
+// ── TX Bundling ───────────────────────────────────────────────────────────
+
+enum BundleStatus {
+  PENDING
+  SUBMITTED
+  INCLUDED
+  FAILED
+}
+
+model TxBundle {
+  id           String       @id @default(uuid())
+  userId       String
+  mintTaskId   String?
+  network      Network
+  status       BundleStatus @default(PENDING)
+  bundleHash   String?
+  txCount      Int          @default(0)
+  targetBlock  String?
+  gasRefundWei String?
+  errorMessage String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mintTask     MintTask?    @relation(fields: [mintTaskId], references: [id])
+
+  @@index([userId, status])
+}
+
+// ── Sniping ───────────────────────────────────────────────────────────────
+
+enum SniperTaskType {
+  FAT_FINGER
+  RARITY
+}
+
+enum SniperTaskStatus {
+  WATCHING
+  TRIGGERED
+  EXECUTING
+  COMPLETED
+  FAILED
+  PAUSED
+}
+
+model SniperTask {
+  id              String           @id @default(uuid())
+  userId          String
+  walletId        String
+  type            SniperTaskType
+  status          SniperTaskStatus @default(WATCHING)
+  collectionSlug  String?
+  contractAddress String?
+  network         Network
+  maxPriceWei     String
+  floorThreshold  Float?
+  minRarityScore  Float?
+  gasSettingsJson Json?
+  triggeredAt     DateTime?
+  completedAt     DateTime?
+  txHash          String?
+  errorMessage    String?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet          Wallet           @relation(fields: [walletId], references: [id])
+
+  @@index([userId, status])
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────
+
+enum NotificationChannel {
+  DISCORD
+  SMS
+  WEBHOOK
+}
+
+enum NotificationEvent {
+  MINT_SUCCESS
+  MINT_FAILED
+  SNIPE_SUCCESS
+  SNIPE_FAILED
+  COLLECTION_PHASE_CHANGE
+  WALLET_LOW_BALANCE
+  BOT_COMPETITION_DETECTED
+  SWEEP_DETECTED
+}
+
+model NotificationConfig {
+  id          String              @id @default(uuid())
+  userId      String              @unique
+  discordJson Json?
+  smsJson     Json?
+  webhookJson Json?
+  events      NotificationEvent[]
+  enabled     Boolean             @default(true)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  logs        NotificationLog[]
+}
+
+model NotificationLog {
+  id       String              @id @default(uuid())
+  configId String
+  channel  NotificationChannel
+  event    NotificationEvent
+  payload  Json
+  success  Boolean
+  error    String?
+  sentAt   DateTime            @default(now())
+  config   NotificationConfig  @relation(fields: [configId], references: [id], onDelete: Cascade)
+
+  @@index([configId, sentAt])
+}
+
+// ── Collection Watch ──────────────────────────────────────────────────────
+
+model CollectionWatch {
+  id             String   @id @default(uuid())
+  userId         String
+  collectionSlug String
+  network        Network
+  alertOnPhase   Boolean  @default(true)
+  alertOnSupply  Boolean  @default(true)
+  alertOnPrice   Boolean  @default(true)
+  enabled        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, collectionSlug, network])
+  @@index([userId])
+}
+
+// ── Portfolio PnL ─────────────────────────────────────────────────────────
+
+model PortfolioItem {
+  id               String   @id @default(uuid())
+  userId           String
+  network          Network
+  walletAddress    String
+  contractAddress  String
+  tokenId          String
+  collectionSlug   String?
+  collectionName   String?
+  acquiredPriceWei String
+  currentPriceWei  String?
+  pnlWei           String?
+  acquiredAt       DateTime
+  updatedAt        DateTime @updatedAt
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, network, contractAddress, tokenId])
+  @@index([userId, network])
+}
+
+// ── Bot Warfare ───────────────────────────────────────────────────────────
+
+model BotCompetitionLog {
+  id                String    @id @default(uuid())
+  mintTaskId        String?
+  network           Network
+  collectionSlug    String?
+  competitorCount   Int       @default(0)
+  detectedGasWei    String?
+  recommendedGasWei String?
+  gasAdjusted       Boolean   @default(false)
+  detectedAt        DateTime  @default(now())
+  mintTask          MintTask? @relation(fields: [mintTaskId], references: [id])
+
+  @@index([mintTaskId])
+}
+
+// ── Internal Swap ─────────────────────────────────────────────────────────
+
+enum SwapStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+model SwapOrder {
+  id           String     @id @default(uuid())
+  userId       String
+  walletId     String
+  network      Network
+  fromToken    String
+  toToken      String
+  amountInWei  String
+  amountOutWei String?
+  slippageBps  Int        @default(50)
+  status       SwapStatus @default(PENDING)
+  txHash       String?
+  errorMessage String?
+  createdAt    DateTime   @default(now())
+  completedAt  DateTime?
+  user         User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallet       Wallet     @relation(fields: [walletId], references: [id])
+
+  @@index([userId, status])
+}
+
+// ── Sweep Alerts ──────────────────────────────────────────────────────────
+
+model SweepAlert {
+  id              String              @id @default(uuid())
+  userId          String
+  collectionSlug  String
+  network         Network
+  minItems        Int                 @default(5)
+  windowSeconds   Int                 @default(60)
+  enabled         Boolean             @default(true)
+  lastTriggeredAt DateTime?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  user            User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  detections      SweepDetectionLog[]
+
+  @@unique([userId, collectionSlug, network])
+  @@index([userId])
+  @@index([enabled])
+}
+
+model SweepDetectionLog {
+  id             String     @id @default(uuid())
+  sweepAlertId   String
+  collectionSlug String
+  network        Network
+  itemCount      Int
+  windowSeconds  Int
+  detectedAt     DateTime   @default(now())
+  salePricesJson Json?
+  sweepAlert     SweepAlert @relation(fields: [sweepAlertId], references: [id], onDelete: Cascade)
+
+  @@index([sweepAlertId, detectedAt])
+}

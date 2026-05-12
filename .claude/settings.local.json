@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($content = Get-Content \"C:\\\\Users\\\\senar\\\\Downloads\\\\GasWarMode Dashboard.html\" -Encoding UTF8; $templateLine = $content[184]; Write-Host \"Template starts with: $\\($templateLine.Substring\\(0,50\\)\\)\"; Write-Host \"Template type: $\\($templateLine.GetType\\(\\).Name\\)\"; # Search for any CSS marker $patterns = @\\('body', 'background', 'color', '#1', '--'\\); foreach \\($p in $patterns\\) { $idx = $templateLine.IndexOf\\($p\\); Write-Host \"Pattern '$p' found at: $idx\" })",
+      "PowerShell($content = Get-Content \"C:\\\\Users\\\\senar\\\\Downloads\\\\GasWarMode Dashboard.html\" -Encoding UTF8; $templateLine = $content[184]; $idx = $templateLine.IndexOf\\('background'\\); Write-Host \"background at: $idx\"; if \\($idx -ge 0\\) { Write-Host $templateLine.Substring\\($idx, [Math]::Min\\(2000, $templateLine.Length - $idx\\)\\) })"
+    ]
+  }
+}
