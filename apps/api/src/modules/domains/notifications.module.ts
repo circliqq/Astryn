@@ -1,9 +1,11 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Injectable,
   Module,
+  Post,
   Put,
   Query,
   UseGuards,
@@ -11,7 +13,7 @@ import {
 import { ConfigService } from "@nestjs/config";
 import { createHmac } from "node:crypto";
 import { IsArray, IsBoolean, IsIn, IsObject, IsOptional } from "class-validator";
-import { Prisma, type NotificationEvent, type NotificationChannel } from "@prisma/client";
+import { Prisma, type NotificationConfig, type NotificationEvent, type NotificationChannel } from "@prisma/client";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -70,6 +72,31 @@ export class NotificationsService {
     if (!cfg || !cfg.enabled) return;
     if (!cfg.events.includes(event)) return;
 
+    await this.deliverConfiguredRoutes(cfg, event, payload);
+  }
+
+  async sendTestNotification(userId: string): Promise<{ routes: number }> {
+    const cfg = await this.prisma.notificationConfig.findUnique({ where: { userId } });
+    if (!cfg) throw new BadRequestException("Save a notification route before sending a test.");
+    if (!cfg.enabled) throw new BadRequestException("Enable notifications before sending a test.");
+
+    const routes = await this.deliverConfiguredRoutes(cfg, "MINT_REMINDER", {
+      message: "Astryn test notification",
+      sentAt: new Date().toISOString(),
+    });
+
+    if (routes === 0) {
+      throw new BadRequestException("Add at least one notification route before sending a test.");
+    }
+
+    return { routes };
+  }
+
+  private async deliverConfiguredRoutes(
+    cfg: NotificationConfig,
+    event: NotificationEvent,
+    payload: Record<string, unknown>,
+  ): Promise<number> {
     const discord = cfg.discordJson as { webhookUrl?: string } | null;
     const sms = cfg.smsJson as { accountSid?: string; authToken?: string; from?: string; to?: string } | null;
     const webhook = cfg.webhookJson as NotificationWebhookConfig | null;
@@ -91,6 +118,7 @@ export class NotificationsService {
     }
 
     await Promise.allSettled(jobs);
+    return jobs.length;
   }
 
   private async sendDiscord(
@@ -290,6 +318,12 @@ class NotificationsController {
         webhookJson,
       },
     });
+  }
+
+  @Post("test")
+  async test(@CurrentUser() user: CurrentUserType) {
+    const result = await this.notificationsService.sendTestNotification(user.id);
+    return { ok: true, ...result };
   }
 
   @Get("logs")

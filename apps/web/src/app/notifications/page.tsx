@@ -129,6 +129,20 @@ export default function NotificationsPage() {
     },
   });
 
+  const testNotification = useMutation({
+    mutationFn: () =>
+      apiFetch<{ ok: boolean; routes: number }>("/notifications/test", {
+        method: "POST",
+      }),
+    onSuccess: (data) => {
+      setMessage(`Test notification attempted on ${data.routes} route${data.routes === 1 ? "" : "s"}. Check the delivery log for status.`);
+      queryClient.invalidateQueries({ queryKey: ["notification-logs"] });
+    },
+    onError: (error) => {
+      setMessage(error instanceof Error ? error.message : "Unable to send test notification.");
+    },
+  });
+
   const enabledChannels = useMemo(() => {
     return [
       discordWebhook.trim() ? "Discord" : null,
@@ -302,9 +316,14 @@ export default function NotificationsPage() {
 
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[12px] text-graphite-500">{configLoading ? "Loading saved configuration..." : message}</p>
-          <Button type="submit" disabled={saveConfig.isPending}>
-            <Save size={14} /> {saveConfig.isPending ? "Saving..." : "Save Notification System"}
-          </Button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button type="button" variant="secondary" disabled={testNotification.isPending} onClick={() => testNotification.mutate()}>
+              <Send size={14} /> {testNotification.isPending ? "Sending..." : "Send Test"}
+            </Button>
+            <Button type="submit" disabled={saveConfig.isPending}>
+              <Save size={14} /> {saveConfig.isPending ? "Saving..." : "Save Notification System"}
+            </Button>
+          </div>
         </div>
       </form>
 

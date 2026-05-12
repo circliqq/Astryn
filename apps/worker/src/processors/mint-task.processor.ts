@@ -1,4 +1,4 @@
-import type { Job } from "bullmq";
+import { Queue, type Job } from "bullmq";
 import type { PrismaClient } from "@prisma/client";
 import { decryptPrivateKey } from "@mint-copilot/wallet-crypto";
 import {
@@ -679,6 +679,7 @@ export async function executeMintTask(
       code: userError.code,
       rawError: rawErrorMessage(error),
     }).catch(() => undefined);
+    await queueMintTaskNotification(prisma, task.id, "FAILED", userError.message).catch(() => undefined);
     throw error;
   }
 }
@@ -1113,6 +1114,66 @@ async function finishTask(
       rawError: rawErrorMessage(error),
     }).catch(() => undefined),
   );
+  await queueMintTaskNotification(prisma, taskId, status, message).catch((error) =>
+    log(prisma, taskId, "warn", "Notification could not be queued.", {
+      rawError: rawErrorMessage(error),
+    }).catch(() => undefined),
+  );
+}
+
+async function queueMintTaskNotification(
+  prisma: PrismaClient,
+  taskId: string,
+  status: "COMPLETED" | "FAILED",
+  message: string,
+) {
+  const task = await prisma.mintTask.findUnique({
+    where: { id: taskId },
+    include: {
+      collection: true,
+      wallets: true,
+      transactions: true,
+    },
+  });
+  if (!task) return;
+
+  const event = status === "COMPLETED" ? "MINT_SUCCESS" : "MINT_FAILED";
+  const successfulMints = task.transactions.filter((tx) => tx.status === "CONFIRMED").length;
+  const failedMints = Math.max(
+    task.transactions.filter((tx) => tx.status === "FAILED").length,
+    task.wallets.filter((wallet) => wallet.status === "failed").length,
+  );
+  const queue = new Queue("notifications-queue", {
+    connection: { url: env("REDIS_URL") },
+  });
+
+  try {
+    await queue.add(
+      event.toLowerCase(),
+      {
+        userId: task.userId,
+        event,
+        payload: {
+          taskId: task.id,
+          collectionSlug: task.collection.slug,
+          collectionName: task.collection.name,
+          network: task.collection.chain,
+          status,
+          message,
+          wallets: task.wallets.length,
+          successfulMints,
+          failedMints,
+        },
+      },
+      {
+        attempts: 2,
+        removeOnComplete: true,
+        removeOnFail: 100,
+      },
+    );
+  } finally {
+    await queue.close().catch(() => undefined);
+  }
 }
 
 async function upsertPostMintReport(prisma: PrismaClient, taskId: string) {
