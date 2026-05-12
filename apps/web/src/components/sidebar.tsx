@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Activity, BarChart3, Bell, ClipboardCheck, Coins, Crosshair, Fuel, Home, Layers, ListTodo,
+  Activity, BarChart3, Bell, BellRing, ClipboardCheck, Coins, Crosshair, Fuel, Home, Layers, ListTodo,
   PieChart, Radar, ScrollText, SendHorizonal, Settings, ShieldCheck, TrendingDown, Vault, Wallet, X,
 } from "lucide-react";
 import { Brand } from "./brand";
@@ -44,6 +44,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/sniper",        label: "Sniper",          icon: Crosshair    },
       { href: "/sweep-alerts",  label: "Sweep Alerts",    icon: TrendingDown },
+      { href: "/mint-alerts",   label: "Mint Alerts",     icon: BellRing     },
       { href: "/portfolio",     label: "Portfolio & PnL", icon: PieChart     },
       { href: "/traits",        label: "Trait Explorer",  icon: Layers       },
     ],
