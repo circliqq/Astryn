@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Search, ShieldCheck, Upload } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { WalletTable } from "@/components/wallet-table";
+import { MintAlertsSection } from "@/components/mint-alerts-section";
 import { Button, Input, Panel } from "@/components/ui";
 
 export default function WalletsPage() {
@@ -52,6 +53,11 @@ export default function WalletsPage() {
           </select>
         </Panel>
         <WalletTable search={search} status={status} />
+
+        {/* ── Mint Alerts ── */}
+        <div className="border-t border-graphite-700 pt-5">
+          <MintAlertsSection />
+        </div>
       </div>
     </AppShell>
   );

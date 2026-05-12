@@ -25,6 +25,7 @@ const ALL_EVENTS: NotificationEvent[] = [
   "WALLET_LOW_BALANCE",
   "BOT_COMPETITION_DETECTED",
   "SWEEP_DETECTED",
+  "MINT_REMINDER",
 ];
 
 class UpsertNotificationConfigDto {

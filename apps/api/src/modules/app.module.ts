@@ -3,6 +3,7 @@ import { ConfigModule } from "@nestjs/config";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { AdminModule } from "./domains/admin.module.js";
 import { BotWarfareModule } from "./domains/bot-warfare.module.js";
+import { MintAlertsModule } from "./domains/mint-alerts.module.js";
 import { BundlerModule } from "./domains/bundler.module.js";
 import { CollectionWatchModule } from "./domains/collection-watch.module.js";
 import { ConsolidationModule } from "./domains/consolidation.module.js";
@@ -68,6 +69,7 @@ import { EventsModule } from "./events/events.module.js";
     BotWarfareModule,
     SwapModule,
     SweepAlertModule,
+    MintAlertsModule,
   ]
 })
 export class AppModule {}

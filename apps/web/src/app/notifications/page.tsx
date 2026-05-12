@@ -16,7 +16,8 @@ type NotificationEvent =
   | "COLLECTION_PHASE_CHANGE"
   | "WALLET_LOW_BALANCE"
   | "BOT_COMPETITION_DETECTED"
-  | "SWEEP_DETECTED";
+  | "SWEEP_DETECTED"
+  | "MINT_REMINDER";
 
 type Channel = "DISCORD" | "SMS" | "WEBHOOK" | "TELEGRAM";
 
@@ -47,6 +48,7 @@ const EVENTS: Array<{ id: NotificationEvent; label: string; detail: string }> = 
   { id: "WALLET_LOW_BALANCE", label: "Low balance", detail: "Wallets below funding thresholds." },
   { id: "BOT_COMPETITION_DETECTED", label: "Bot pressure", detail: "High competition signals." },
   { id: "SWEEP_DETECTED", label: "Sweep detected", detail: "Mass buys across a collection in a short window." },
+  { id: "MINT_REMINDER", label: "Mint reminder", detail: "Alerts 1h, 30m, 15m and 5m before a scheduled mint starts." },
 ];
 
 const EVENT_LABELS = Object.fromEntries(EVENTS.map((event) => [event.id, event.label])) as Record<NotificationEvent, string>;

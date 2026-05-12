@@ -76,6 +76,7 @@ model User {
   portfolioItems     PortfolioItem[]
   swapOrders         SwapOrder[]
   sweepAlerts        SweepAlert[]
+  mintAlerts         MintAlert[]
 }
 
 model Session {
@@ -487,6 +488,7 @@ enum NotificationEvent {
   WALLET_LOW_BALANCE
   BOT_COMPETITION_DETECTED
   SWEEP_DETECTED
+  MINT_REMINDER
 }
 
 model NotificationConfig {
@@ -636,4 +638,24 @@ model SweepDetectionLog {
   sweepAlert     SweepAlert @relation(fields: [sweepAlertId], references: [id], onDelete: Cascade)
 
   @@index([sweepAlertId, detectedAt])
+}
+
+// ── Mint Alerts ───────────────────────────────────────────────────────────────
+
+model MintAlert {
+  id              String   @id @default(uuid())
+  userId          String
+  collectionSlug  String
+  collectionName  String
+  network         Network
+  mintStartTime   DateTime
+  alertMinutes    Int[]
+  firedMinutes    Int[]
+  enabled         Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([enabled, mintStartTime])
 }
