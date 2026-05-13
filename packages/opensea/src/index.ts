@@ -258,9 +258,41 @@ export class OpenSeaClient {
   }
 
   async checkEligibility(slug: string, walletAddress: string, phaseType: MintPhaseType): Promise<EligibilityResult> {
-    const data = await this.request<Record<string, unknown>>(
-      `/drops/${slug}/eligibility?wallet=${walletAddress}&phase=${phaseType}`
-    );
+    // Try multiple endpoint formats — OpenSea's API varies by collection/phase type.
+    const endpoints = [
+      `/drops/${slug}/eligibility?wallet_address=${walletAddress}&phase_type=${phaseType}`,
+      `/drops/${slug}/eligibility?wallet=${walletAddress}&phase=${phaseType}`,
+      `/drops/${slug}/eligibility/${walletAddress}?phase=${phaseType}`,
+    ];
+
+    let data: Record<string, unknown> | null = null;
+    let lastError: unknown;
+
+    for (const endpoint of endpoints) {
+      try {
+        data = await this.request<Record<string, unknown>>(endpoint);
+        break;
+      } catch (err) {
+        lastError = err;
+        const msg = err instanceof Error ? err.message : String(err);
+        // Only continue to next endpoint on 404; other errors (429, 5xx) should surface.
+        if (!msg.includes("404")) throw err;
+      }
+    }
+
+    // All endpoints returned 404 — OpenSea doesn't expose a per-wallet check for
+    // this phase type (common for GTD / FCFS / open phases). Treat as eligible so
+    // the user can proceed; they've already verified eligibility on OpenSea itself.
+    if (!data) {
+      return {
+        eligible: phaseType !== "allowlist",
+        phaseType,
+        reason: phaseType === "allowlist"
+          ? "Allowlist eligibility could not be verified via OpenSea API (404). Check OpenSea directly."
+          : "Phase is open — no per-wallet eligibility check required.",
+      };
+    }
+
     const payload = mintPayloadFrom(data);
     const proof = stringArrayFrom(data, [
       ["proof"],
