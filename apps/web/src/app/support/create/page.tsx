@@ -25,7 +25,7 @@ export default function CreateSupportTicketPage() {
           body: body.trim(),
         }),
       }),
-    onSuccess: (res) => {
+    onSuccess: (res: { id: string }) => {
       router.push(`/support/${res.id}`);
     },
   });
