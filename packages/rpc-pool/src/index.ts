@@ -124,4 +124,45 @@ export class RpcPool {
       };
 
       for (const endpoint of endpoints) {
-        void this.broadcastToEndpoint(endpoint, serializedTra
+        void this.broadcastToEndpoint(endpoint, serializedTransaction).then(settle);
+      }
+    });
+  }
+
+  // Derive a broadcast timeout for a specific endpoint.
+  // If dynamicTimeoutMultiplier is set, use: clamp(ping * multiplier, min, max).
+  // Falls back to the static broadcastTimeoutMs, then 800ms.
+  private timeoutFor(endpoint: RpcEndpointConfig): number | undefined {
+    const multiplier = this.options.dynamicTimeoutMultiplier;
+    if (multiplier) {
+      const latency = this.health.get(endpoint.id)?.latencyMs;
+      if (latency != null) {
+        const min = this.options.dynamicTimeoutMinMs ?? 300;
+        const max = this.options.dynamicTimeoutMaxMs ?? 1_200;
+        return Math.min(max, Math.max(min, Math.round(latency * multiplier)));
+      }
+    }
+    return this.options.broadcastTimeoutMs;
+  }
+
+  private async broadcastToEndpoint(endpoint: RpcEndpointConfig, serializedTransaction: Hex): Promise<BroadcastResult> {
+    try {
+      const hash = await sendRawTransaction(
+        {
+          chainName: endpoint.chainName,
+          rpcUrl: endpoint.url,
+          timeoutMs: this.timeoutFor(endpoint),
+        },
+        serializedTransaction
+      );
+      return { endpointId: endpoint.id, provider: endpoint.name, ok: true, hash };
+    } catch (error) {
+      return {
+        endpointId: endpoint.id,
+        provider: endpoint.name,
+        ok: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+}

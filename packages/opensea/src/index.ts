@@ -561,4 +561,46 @@ function booleanFrom(data: Record<string, unknown>, paths: string[][]) {
     }
   }
 
-  retur
+  return undefined;
+}
+
+function stringArrayFrom(data: Record<string, unknown>, paths: string[][]) {
+  for (const path of paths) {
+    let current: unknown = data;
+    for (const key of path) {
+      if (!isRecord(current)) {
+        current = undefined;
+        break;
+      }
+      current = current[key];
+    }
+    if (Array.isArray(current)) return current.map(String).filter((item) => item.startsWith("0x"));
+  }
+
+  return undefined;
+}
+
+function normalizeWeiString(value: string) {
+  if (!value.includes(".")) return value;
+  const [whole, fractional = ""] = value.split(".");
+  const paddedFractional = `${fractional}000000000000000000`.slice(0, 18);
+  return `${BigInt(whole || "0") * 1_000_000_000_000_000_000n + BigInt(paddedFractional || "0")}`;
+}
+
+function ethStatFrom(data: Record<string, unknown>, paths: string[][]) {
+  const value = stringFrom(data, paths);
+  if (value == null) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+  return parsed.toString();
+}
+
+function normalizeTimestampString(value: string) {
+  const date = new Date(value);
+  if (!Number.isNaN(date.getTime())) return Math.floor(date.getTime() / 1000).toString();
+  return value;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

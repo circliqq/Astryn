@@ -1785,4 +1785,882 @@ async function waitForAnyReceipt(
         settled = true;
         reject(new Error(`Receipt timeout after ${timeoutMs}ms for ${hashes.length} hashes.`));
       }
-    }, timeo
+    }, timeoutMs);
+
+    for (const hash of hashes) {
+      waitForReceipt(options, hash, { confirmations, timeoutMs })
+        .then((receipt) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(deadline);
+            resolve(receipt);
+          }
+        })
+        .catch(() => {
+          // This hash didn't land — another hash may still succeed.
+        });
+    }
+  });
+}
+// ──────────────────────────────────────────────────────────────────────────
+
+// ── Utility helpers ───────────────────────────────────────────────────────
+
+function env(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function numberEnv(name: string, fallback: number) {
+  return numberOrDefault(process.env[name], fallback);
+}
+
+function bigintEnv(name: string, fallback: bigint) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  try { return BigInt(raw); } catch { return fallback; }
+}
+
+function numberOrDefault(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function numberOrUndefined(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function shortAddress(address: string) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function rawErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isReceiptPending(error: unknown) {
+  return /timeout|timed out|not found|could not find/i.test(rawErrorMessage(error));
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
+function toOpenSeaPhase(phaseType: string) {
+  const normalized = phaseType.toLowerCase();
+  if (normalized === "allowlist" || normalized === "gtd" || normalized === "fcfs") return normalized;
+  return "public";
+}
+
+function rpcUrlsFor(network: "base" | "ethereum"): string[] {
+  const prefix = network === "base" ? "BASE" : "ETH";
+  return [
+    env(`${prefix}_RPC_PRIMARY`),
+    process.env[`${prefix}_RPC_BACKUP_1`],
+    process.env[`${prefix}_RPC_BACKUP_2`],
+  ].filter(Boolean) as string[];
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+      }
+    }),
+  );
+  return results;
+}
+
+// ── Bot Warfare ───────────────────────────────────────────────────────────
+
+interface CompetitionResult {
+  detected: boolean;
+  competitorCount: number;
+  recommendedMaxFeeGwei: number;
+  spikeFactor: number;
+}
+
+async function detectBotCompetition(
+  prisma: PrismaClient,
+  mintTaskId: string,
+  collectionSlug: string,
+  chain: "BASE" | "ETHEREUM",
+  currentGas: { baseFeePerGas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+): Promise<CompetitionResult> {
+  // Tuned thresholds: detect earlier (1.3×) and boost harder (1.5×).
+  // Use 1min snapshot window instead of 5min — faster spike detection.
+  const SPIKE_THRESHOLD = numberOrDefault(process.env["BOT_WARFARE_SPIKE_THRESHOLD"], 1.3);
+  const BOOST_MULTIPLIER = numberOrDefault(process.env["BOT_WARFARE_BOOST_MULTIPLIER"], 1.5);
+
+  let detected = false;
+  let competitorCount = 0;
+  let spikeFactor = 1;
+  let recommendedMaxFeeGwei = Number(currentGas.maxFeePerGas / 1_000_000_000n);
+
+  try {
+    // 1min window (was 5min) — catches gas spikes much faster.
+    const oneMinuteAgo = new Date(Date.now() - 60 * 1_000);
+    const snapshots = await prisma.gasSnapshot.findMany({
+      where: { network: chain, createdAt: { gte: oneMinuteAgo } },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    });
+
+    if (snapshots.length >= 2) {
+      const avgBaseFee =
+        snapshots.reduce((sum, s) => sum + BigInt(s.baseFeeWei), 0n) /
+        BigInt(snapshots.length);
+
+      if (avgBaseFee > 0n) {
+        spikeFactor = Number(currentGas.baseFeePerGas * 100n / avgBaseFee) / 100;
+        if (spikeFactor >= SPIKE_THRESHOLD) {
+          detected = true;
+          competitorCount = Math.max(1, Math.round((spikeFactor - 1) * 5));
+          recommendedMaxFeeGwei = Math.ceil(
+            Number(currentGas.maxFeePerGas / 1_000_000_000n) * BOOST_MULTIPLIER,
+          );
+        }
+      }
+    }
+  } catch {
+    // non-fatal — continue mint even if competition check fails
+  }
+
+  await prisma.botCompetitionLog
+    .create({
+      data: {
+        mintTaskId,
+        network: chain,
+        collectionSlug,
+        competitorCount,
+        detectedGasWei: currentGas.baseFeePerGas.toString(),
+        recommendedGasWei: (BigInt(recommendedMaxFeeGwei) * 1_000_000_000n).toString(),
+        gasAdjusted: detected,
+      },
+    })
+    .catch(() => undefined);
+
+  return { detected, competitorCount, recommendedMaxFeeGwei, spikeFactor };
+}
+
+function applyCompetitionBoost(
+  settings: GasSettings,
+  competition: CompetitionResult,
+): GasSettings {
+  if (!competition.detected) return settings;
+  // Boost both maxFee AND priorityFee proportional to spike factor (capped 3×).
+  const priorityBoost = Math.min(competition.spikeFactor, 3);
+  return {
+    ...settings,
+    maxFeeGwei: Math.max(settings.maxFeeGwei, competition.recommendedMaxFeeGwei),
+    priorityFeeGwei: settings.priorityFeeGwei * priorityBoost,
+  };
+}
+
+function applyOfferRatioOverride(
+  settings: GasSettings,
+  override: { maxFeeGwei: number } | null,
+): GasSettings {
+  if (!override) return settings;
+  // Offer/floor ratio override: take the higher of existing cap and the ratio-derived cap.
+  return {
+    ...settings,
+    maxFeeGwei: Math.max(settings.maxFeeGwei, override.maxFeeGwei),
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+
+function resolveTargetAt(runAt: string | undefined, scheduledAt: Date | null) {
+  if (runAt) {
+    const targetAt = new Date(runAt);
+    if (!Number.isNaN(targetAt.getTime())) return targetAt;
+  }
+  return scheduledAt ?? new Date();
+}
+
+function resolveGasSettings(
+  taskSettings: unknown,
+  walletSettings: unknown,
+): GasSettings {
+  const settings = (walletSettings ?? taskSettings ?? {}) as Partial<GasSettings>;
+  const mode = settings.mode ?? "aggressive";
+  // Fall back to engine presets — these are conservative live-gas-aware values,
+  // NOT the old hardcoded 200/15 gwei floors that caused massive over-gassing.
+  const preset = presetGasSettings(mode);
+  return {
+    mode,
+    maxFeeGwei: numberOrDefault(settings.maxFeeGwei, preset.maxFeeGwei),
+    priorityFeeGwei: numberOrDefault(settings.priorityFeeGwei, preset.priorityFeeGwei),
+    maxTotalGasCostEth: numberOrDefault(settings.maxTotalGasCostEth, preset.maxTotalGasCostEth),
+    gasGuardianEnabled: settings.gasGuardianEnabled ?? true,
+    gasBumpEnabled: settings.gasBumpEnabled ?? preset.gasBumpEnabled,
+    maxBumpAttempts: numberOrDefault(settings.maxBumpAttempts, preset.maxBumpAttempts),
+  };
+}
+
+function normalizeMintQuantity(value: unknown) {
+  const quantity = Math.floor(numberOrDefault(value, 1));
+  return Math.max(1, Math.min(quantity, 50));
+}
+
+function resolvePriorityMinting(raw: unknown): PriorityMintingSettings {
+  if (!isRecord(raw)) return { enabled: false };
+  return {
+    enabled: Boolean(raw.enabled),
+    maxTransactions:
+      typeof raw.maxTransactions === "number" && Number.isFinite(raw.maxTransactions)
+        ? Math.max(0, Math.floor(raw.maxTransactions))
+        : undefined,
+    supplyBuffer:
+      typeof raw.supplyBuffer === "number" && Number.isFinite(raw.supplyBuffer)
+        ? Math.max(0, Math.floor(raw.supplyBuffer))
+        : undefined,
+    priorityWalletIds: Array.isArray(raw.priorityWalletIds)
+      ? raw.priorityWalletIds.map(String)
+      : [],
+  };
+}
+
+async function applyPriorityMinting(
+  prisma: PrismaClient,
+  taskId: string,
+  prepared: PreparedMint[],
+  settings: PriorityMintingSettings,
+) {
+  if (!settings.enabled) return prepared;
+  const maxTransactions = settings.maxTransactions;
+  if (!maxTransactions || maxTransactions >= prepared.length) {
+    await log(prisma, taskId, "info", "Priority minting is enabled; no prepared transactions needed to be skipped.", {
+      prepared: prepared.length,
+      maxTransactions: maxTransactions ?? null,
+    });
+    return prepared;
+  }
+
+  const ranked = prepared
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftRank = left.item.priorityRank ?? Number.MAX_SAFE_INTEGER;
+      const rightRank = right.item.priorityRank ?? Number.MAX_SAFE_INTEGER;
+      if (left.item.priorityMint !== right.item.priorityMint) return left.item.priorityMint ? -1 : 1;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return left.index - right.index;
+    });
+  const keep = ranked.slice(0, maxTransactions).map((entry) => entry.item);
+  const skipped = ranked.slice(maxTransactions).map((entry) => entry.item);
+
+  await Promise.all(
+    skipped.map((item) =>
+      prisma.mintTaskWallet.update({
+        where: { id: item.taskWalletId },
+        data: {
+          status: "priority_skipped",
+          progress: 100,
+          errorCode: "PRIORITY_SUPPLY_CAP",
+        },
+      }),
+    ),
+  );
+  await log(
+    prisma,
+    taskId,
+    "warn",
+    `Priority minting kept ${keep.length} prepared transaction(s) and skipped ${skipped.length} excess transaction(s).`,
+    {
+      maxTransactions,
+      skippedWalletIds: skipped.map((item) => item.walletId),
+    },
+  );
+
+  return keep;
+}
+
+async function queueInstantFlipperIntents(
+  prisma: PrismaClient,
+  openSea: OpenSeaClient,
+  taskId: string,
+  collectionSlug: string,
+  contractAddress: string,
+  network: "ethereum" | "base",
+  rpcUrl: string,
+  rawSettings: unknown,
+  broadcasted: BroadcastedMint[],
+  receiptResults: ReceiptOutcome[],
+) {
+  const settings = resolveInstantFlipper(rawSettings);
+  if (!settings.enabled) return;
+
+  // Manual mode: user presses "Flip Now" — don't auto-list here
+  if (settings.mode === "manual") {
+    await log(prisma, taskId, "info", "Instant Flipper is in manual mode. Press Flip Now on the task to list.");
+    return;
+  }
+
+  const confirmedItems = broadcasted
+    .map((item, i) => ({ item, outcome: receiptResults[i] }))
+    .filter((x): x is { item: BroadcastedMint; outcome: Extract<ReceiptOutcome, { status: "confirmed" }> } =>
+      x.outcome?.status === "confirmed",
+    );
+
+  if (confirmedItems.length === 0) {
+    await log(prisma, taskId, "warn", "Instant Flipper: no confirmed mints to list.");
+    return;
+  }
+
+  let floorPriceEth: number | null = null;
+  try {
+    const stats = await openSea.getCollectionStats(collectionSlug);
+    floorPriceEth = stats.floorPriceEth ? Number(stats.floorPriceEth) : null;
+  } catch (error) {
+    await log(prisma, taskId, "warn", "Instant Flipper could not load OpenSea floor price.", {
+      rawError: rawErrorMessage(error),
+    });
+  }
+
+  const targetPriceEth = resolveFlipperPrice(settings, floorPriceEth);
+  if (targetPriceEth == null) {
+    await log(prisma, taskId, "warn", "Instant Flipper: no valid price available. Set a fixed price or ensure floor price is available.", { floorPriceEth });
+    return;
+  }
+
+  const client = createMintPublicClient({ chainName: network, rpcUrl });
+
+  for (const { item, outcome } of confirmedItems) {
+    const maxToList = settings.maxPerWallet ?? outcome.tokenIds.length;
+    const tokenIds = outcome.tokenIds.slice(0, maxToList);
+
+    if (tokenIds.length === 0) {
+      await log(prisma, taskId, "warn", `Instant Flipper: no Transfer events found for ${shortAddress(item.walletAddress)}.`);
+      continue;
+    }
+
+    const privateKey = await decryptPrivateKey(item.walletCrypto, {
+      masterKey: env("ENCRYPTION_MASTER_KEY"),
+    }).catch(() => null);
+
+    if (!privateKey) {
+      await log(prisma, taskId, "error", `Instant Flipper: failed to decrypt key for ${shortAddress(item.walletAddress)}.`);
+      continue;
+    }
+
+    for (const tokenId of tokenIds) {
+      try {
+        await createSeaportListing(
+          openSea, client, network, contractAddress,
+          tokenId, targetPriceEth,
+          item.walletAddress, privateKey as `0x${string}`,
+        );
+        await log(prisma, taskId, "info",
+          `Instant Flipper listed token #${tokenId} for ${shortAddress(item.walletAddress)} at ${targetPriceEth.toFixed(5)} ETH.`,
+          { tokenId: tokenId.toString(), priceEth: targetPriceEth, walletId: item.walletId },
+        );
+      } catch (err) {
+        await log(prisma, taskId, "error",
+          `Instant Flipper failed to list token #${tokenId} for ${shortAddress(item.walletAddress)}: ${rawErrorMessage(err)}`,
+          { tokenId: tokenId.toString(), rawError: rawErrorMessage(err) },
+        );
+      }
+    }
+  }
+}
+
+// ── Manual flip job (triggered by "Flip Now" button) ─────────────────────────
+
+interface InstantFlipJob {
+  taskId: string;
+  manual?: boolean;
+}
+
+export async function executeInstantFlipJob(
+  job: Job<InstantFlipJob>,
+  prisma: PrismaClient,
+) {
+  const { taskId } = job.data;
+
+  const task = await prisma.mintTask.findUniqueOrThrow({
+    where: { id: taskId },
+    include: {
+      collection: true,
+      wallets: { include: { wallet: true } },
+    },
+  });
+
+  const openSea = new OpenSeaClient({ apiKey: env("OPENSEA_API_KEY") });
+  const network = task.collection.chain === "BASE" ? "base" : "ethereum";
+  const rpcUrls = rpcUrlsFor(network);
+  const rpcUrl = rpcUrls[0] ?? "";
+  const client = createMintPublicClient({ chainName: network, rpcUrl });
+
+  const settings = resolveInstantFlipper(task.instantFlipperJson);
+  if (!settings.enabled) {
+    await log(prisma, taskId, "warn", "Instant Flipper is not enabled on this task.");
+    return;
+  }
+
+  // Fetch floor price
+  let floorPriceEth: number | null = null;
+  try {
+    const stats = await openSea.getCollectionStats(task.collection.slug);
+    floorPriceEth = stats.floorPriceEth ? Number(stats.floorPriceEth) : null;
+  } catch {
+    await log(prisma, taskId, "warn", "Instant Flipper could not load OpenSea floor price.");
+  }
+
+  const targetPriceEth = resolveFlipperPrice(settings, floorPriceEth);
+  if (targetPriceEth == null) {
+    await log(prisma, taskId, "warn", "Instant Flipper: no valid price. Set a fixed price or ensure floor is available.", { floorPriceEth });
+    return;
+  }
+
+  await log(prisma, taskId, "info", `Instant Flipper (manual) starting. Target price: ${targetPriceEth.toFixed(5)} ETH.`);
+
+  // Find confirmed transactions for this task
+  const transactions = await prisma.transaction.findMany({
+    where: { mintTaskId: taskId, status: "CONFIRMED" },
+    select: { txHash: true, walletId: true },
+  });
+
+  if (transactions.length === 0) {
+    await log(prisma, taskId, "warn", "Instant Flipper: no confirmed transactions found for this task.");
+    return;
+  }
+
+  for (const tx of transactions) {
+    if (!tx.txHash) continue;
+
+    const taskWallet = task.wallets.find((w) => w.walletId === tx.walletId);
+    if (!taskWallet) continue;
+
+    const wallet = taskWallet.wallet;
+
+    try {
+      const receipt = await client.getTransactionReceipt({ hash: tx.txHash as `0x${string}` });
+      const tokenIds = extractTransferTokenIds(receipt.logs, wallet.address as `0x${string}`);
+
+      if (tokenIds.length === 0) {
+        await log(prisma, taskId, "warn", `Instant Flipper: no Transfer events found for ${shortAddress(wallet.address)}.`);
+        continue;
+      }
+
+      const maxToList = settings.maxPerWallet ?? tokenIds.length;
+      const toList = tokenIds.slice(0, maxToList);
+
+      const privateKey = await decryptPrivateKey(
+        {
+          encryptedPrivateKey: wallet.encryptedPrivateKey,
+          encryptionSalt: wallet.encryptionSalt,
+          encryptionIv: wallet.encryptionIv,
+          encryptionAuthTag: wallet.encryptionAuthTag,
+          encryptionVersion: wallet.encryptionVersion,
+        },
+        { masterKey: env("ENCRYPTION_MASTER_KEY") },
+      );
+
+      for (const tokenId of toList) {
+        try {
+          await createSeaportListing(
+            openSea, client, network,
+            task.collection.contractAddress,
+            tokenId, targetPriceEth,
+            wallet.address as `0x${string}`,
+            privateKey as `0x${string}`,
+          );
+          await log(prisma, taskId, "info",
+            `Instant Flipper listed token #${tokenId} for ${shortAddress(wallet.address)} at ${targetPriceEth.toFixed(5)} ETH.`,
+            { tokenId: tokenId.toString(), priceEth: targetPriceEth },
+          );
+        } catch (err) {
+          await log(prisma, taskId, "error",
+            `Instant Flipper failed to list token #${tokenId}: ${rawErrorMessage(err)}`,
+            { tokenId: tokenId.toString(), rawError: rawErrorMessage(err) },
+          );
+        }
+      }
+    } catch (err) {
+      await log(prisma, taskId, "error",
+        `Instant Flipper failed to process tx for ${shortAddress(wallet.address)}: ${rawErrorMessage(err)}`,
+        { txHash: tx.txHash, rawError: rawErrorMessage(err) },
+      );
+    }
+  }
+}
+
+// ── Seaport listing helpers ───────────────────────────────────────────────────
+
+function extractTransferTokenIds(
+  logs: readonly { topics: readonly string[] }[],
+  walletAddress: `0x${string}`,
+): bigint[] {
+  const walletTopic = `0x${walletAddress.slice(2).toLowerCase().padStart(64, "0")}`;
+  return logs
+    .filter(
+      (log) =>
+        log.topics[0]?.toLowerCase() === TRANSFER_EVENT_TOPIC &&
+        log.topics[2]?.toLowerCase() === walletTopic &&
+        log.topics[3] != null,
+    )
+    .map((log) => BigInt(log.topics[3] as string));
+}
+
+async function createSeaportListing(
+  openSea: OpenSeaClient,
+  client: ReturnType<typeof createMintPublicClient>,
+  network: "ethereum" | "base",
+  contractAddress: string,
+  tokenId: bigint,
+  priceEth: number,
+  walletAddress: `0x${string}`,
+  privateKey: `0x${string}`,
+): Promise<void> {
+  const chainId = SEAPORT_CHAIN_IDS[network] ?? 1;
+  const priceWei = BigInt(Math.round(priceEth * 1e18));
+  const feeAmount = (priceWei * OPENSEA_FEE_BPS) / 10_000n;
+  const sellerAmount = priceWei - feeAmount;
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const startTime = BigInt(nowSec);
+  const endTime = BigInt(nowSec + 7 * 24 * 3600); // 7 days
+  const salt = BigInt(Math.floor(Math.random() * Number.MAX_SAFE_INTEGER));
+
+  // Get Seaport order counter from chain
+  const counter = await client.readContract({
+    address: SEAPORT_V15_ADDRESS,
+    abi: SEAPORT_GET_COUNTER_ABI,
+    functionName: "getCounter",
+    args: [walletAddress],
+  });
+
+  // Build EIP-712 message (bigint for uint256, hex for bytes32/address)
+  const message = {
+    offerer: walletAddress,
+    zone: ZERO_ADDRESS,
+    offer: [
+      {
+        itemType: 2, // ERC721
+        token: contractAddress as `0x${string}`,
+        identifierOrCriteria: tokenId,
+        startAmount: 1n,
+        endAmount: 1n,
+      },
+    ],
+    consideration: [
+      {
+        itemType: 0, // NATIVE
+        token: ZERO_ADDRESS,
+        identifierOrCriteria: 0n,
+        startAmount: sellerAmount,
+        endAmount: sellerAmount,
+        recipient: walletAddress,
+      },
+      {
+        itemType: 0, // NATIVE — OpenSea fee
+        token: ZERO_ADDRESS,
+        identifierOrCriteria: 0n,
+        startAmount: feeAmount,
+        endAmount: feeAmount,
+        recipient: OPENSEA_FEE_RECIPIENT,
+      },
+    ],
+    orderType: 0, // FULL_OPEN
+    startTime,
+    endTime,
+    zoneHash: ZERO_BYTES32,
+    salt,
+    conduitKey: OPENSEA_CONDUIT_KEY,
+    counter,
+  };
+
+  const account = privateKeyToAccount(privateKey);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const signature = await account.signTypedData({
+    domain: {
+      name: "Seaport",
+      version: "1.5",
+      chainId,
+      verifyingContract: SEAPORT_V15_ADDRESS,
+    },
+    types: SEAPORT_EIP712_TYPES,
+    primaryType: "OrderComponents",
+    message,
+  } as Parameters<typeof account.signTypedData>[0]);
+
+  // Build string-form parameters for the OpenSea API
+  const parameters: SeaportOrderParameters = {
+    offerer: walletAddress,
+    zone: ZERO_ADDRESS,
+    offer: [
+      {
+        itemType: 2,
+        token: contractAddress,
+        identifierOrCriteria: tokenId.toString(),
+        startAmount: "1",
+        endAmount: "1",
+      },
+    ],
+    consideration: [
+      {
+        itemType: 0,
+        token: ZERO_ADDRESS,
+        identifierOrCriteria: "0",
+        startAmount: sellerAmount.toString(),
+        endAmount: sellerAmount.toString(),
+        recipient: walletAddress,
+      },
+      {
+        itemType: 0,
+        token: ZERO_ADDRESS,
+        identifierOrCriteria: "0",
+        startAmount: feeAmount.toString(),
+        endAmount: feeAmount.toString(),
+        recipient: OPENSEA_FEE_RECIPIENT,
+      },
+    ],
+    orderType: 0,
+    startTime: startTime.toString(),
+    endTime: endTime.toString(),
+    zoneHash: ZERO_BYTES32,
+    salt: salt.toString(),
+    conduitKey: OPENSEA_CONDUIT_KEY,
+    counter: counter.toString(),
+    totalOriginalConsiderationItems: 2,
+  };
+
+  await openSea.postSeaportListing(network, parameters, signature);
+}
+
+function resolveInstantFlipper(raw: unknown): InstantFlipperSettings {
+  if (!isRecord(raw)) return { enabled: false };
+  return {
+    enabled: Boolean(raw.enabled),
+    mode: raw.mode === "manual" ? "manual" : "auto",
+    priceMode: raw.priceMode === "fixed" ? "fixed" : "floor_percent",
+    floorMultiplier: numberOrUndefined(raw.floorMultiplier),
+    fixedPriceEth: numberOrUndefined(raw.fixedPriceEth),
+    minPriceEth: numberOrUndefined(raw.minPriceEth),
+    maxPerWallet: raw.maxPerWallet == null ? undefined : Math.max(1, Math.floor(numberOrDefault(raw.maxPerWallet, 1))),
+  };
+}
+
+function resolveFlipperPrice(settings: InstantFlipperSettings, floorPriceEth: number | null) {
+  const fixedPrice = settings.fixedPriceEth;
+  const multiplier = settings.floorMultiplier ?? 0.98;
+  let price = settings.priceMode === "fixed" ? fixedPrice : floorPriceEth != null ? floorPriceEth * multiplier : fixedPrice;
+  if (price == null || !Number.isFinite(price) || price <= 0) return null;
+  if (settings.minPriceEth != null) price = Math.max(price, settings.minPriceEth);
+  return price;
+}
+
+function numberOrUndefined(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toOpenSeaPhase(phaseType: string) {
+  const normalized = phaseType.toLowerCase();
+  if (
+    normalized === "allowlist" ||
+    normalized === "gtd" ||
+    normalized === "fcfs"
+  )
+    return normalized;
+  return "public";
+}
+
+function rpcUrlsFor(network: "base" | "ethereum"): string[] {
+  const prefix = network === "base" ? "BASE" : "ETH";
+  return [
+    env(`${prefix}_RPC_PRIMARY`),
+    process.env[`${prefix}_RPC_BACKUP_1`],
+    process.env[`${prefix}_RPC_BACKUP_2`],
+  ].filter(Boolean) as string[];
+}
+
+async function sleepUntil(targetAt: Date) {
+  // MINT_EARLY_BROADCAST_MS: broadcast this many ms BEFORE the target open time.
+  // Ethereum block timestamps have ~15s tolerance — broadcasting 500–1000ms early
+  // means our tx lands in the mempool before competing bots fire at T=0.
+  // Safe default: 800ms. Set to 0 to disable.
+  const earlyMs = numberEnv("MINT_EARLY_BROADCAST_MS", 800);
+
+  // Wake up 20ms before (earlyMs + 20) and spin at 1ms intervals for precision.
+  const fireAt = targetAt.getTime() - earlyMs;
+  const wakeupMs = 20;
+  const coarseWait = fireAt - Date.now() - wakeupMs;
+  if (coarseWait > 0) {
+    await delay(coarseWait);
+  }
+
+  while (Date.now() < fireAt) {
+    await delay(Math.min(1, fireAt - Date.now()));
+  }
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
+// ── Bot Warfare ───────────────────────────────────────────────────────────
+
+interface CompetitionResult {
+  detected: boolean;
+  competitorCount: number;
+  recommendedMaxFeeGwei: number;
+  spikeFactor: number;
+}
+
+async function detectBotCompetition(
+  prisma: PrismaClient,
+  mintTaskId: string,
+  collectionSlug: string,
+  chain: "BASE" | "ETHEREUM",
+  currentGas: { baseFeePerGas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+): Promise<CompetitionResult> {
+  const SPIKE_THRESHOLD = numberOrDefault(process.env["BOT_WARFARE_SPIKE_THRESHOLD"], 1.5);
+  const BOOST_MULTIPLIER = numberOrDefault(process.env["BOT_WARFARE_BOOST_MULTIPLIER"], 1.2);
+
+  let detected = false;
+  let competitorCount = 0;
+  let spikeFactor = 1;
+  let recommendedMaxFeeGwei = Number(currentGas.maxFeePerGas / 1_000_000_000n);
+
+  try {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000);
+    const snapshots = await prisma.gasSnapshot.findMany({
+      where: { network: chain, createdAt: { gte: fiveMinutesAgo } },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    });
+
+    if (snapshots.length >= 3) {
+      const avgBaseFee =
+        snapshots.reduce((sum, s) => sum + BigInt(s.baseFeeWei), 0n) /
+        BigInt(snapshots.length);
+
+      if (avgBaseFee > 0n) {
+        spikeFactor = Number(currentGas.baseFeePerGas * 100n / avgBaseFee) / 100;
+        if (spikeFactor >= SPIKE_THRESHOLD) {
+          detected = true;
+          competitorCount = Math.max(1, Math.round((spikeFactor - 1) * 5));
+          recommendedMaxFeeGwei = Math.ceil(
+            Number(currentGas.maxFeePerGas / 1_000_000_000n) * BOOST_MULTIPLIER,
+          );
+        }
+      }
+    }
+  } catch {
+    // non-fatal — continue mint even if competition check fails
+  }
+
+  await prisma.botCompetitionLog
+    .create({
+      data: {
+        mintTaskId,
+        network: chain,
+        collectionSlug,
+        competitorCount,
+        detectedGasWei: currentGas.baseFeePerGas.toString(),
+        recommendedGasWei: (BigInt(recommendedMaxFeeGwei) * 1_000_000_000n).toString(),
+        gasAdjusted: detected,
+      },
+    })
+    .catch(() => undefined);
+
+  return { detected, competitorCount, recommendedMaxFeeGwei, spikeFactor };
+}
+
+function applyCompetitionBoost(
+  settings: GasSettings,
+  competition: CompetitionResult,
+): GasSettings {
+  if (!competition.detected) return settings;
+  // Boost both maxFee ceiling AND priorityFee floor.
+  // maxFee alone isn't enough — during a gas war, priority fee determines
+  // inclusion order. baseFee can spike before mempool priority catches up
+  // (bots about to flood), so we preemptively raise priorityFeeGwei proportional
+  // to the spike factor (capped at 3× to prevent runaway on extreme spikes).
+  const priorityBoost = Math.min(competition.spikeFactor, 3);
+  return {
+    ...settings,
+    maxFeeGwei: Math.max(settings.maxFeeGwei, competition.recommendedMaxFeeGwei),
+    priorityFeeGwei: settings.priorityFeeGwei * priorityBoost,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+      }
+    }),
+  );
+  return results;
+}
+
+function numberEnv(name: string, fallback: number) {
+  return numberOrDefault(process.env[name], fallback);
+}
+
+function bigintEnv(name: string, fallback: bigint) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  try {
+    return BigInt(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function numberOrDefault(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function isReceiptPending(error: unknown) {
+  return /timeout|timed out|not found|could not find/i.test(rawErrorMessage(error));
+}
+
+function rawErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function shortAddress(address: string) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+
+function env(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
