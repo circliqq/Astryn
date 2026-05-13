@@ -161,7 +161,12 @@ class CollectionsController {
         }
 
         try {
-          const result = await client.checkEligibility(collection.slug, wallet.address, toOpenSeaPhase(window.phaseType));
+          const result = await client.checkEligibility(
+            collection.slug,
+            wallet.address,
+            toOpenSeaPhase(window.phaseType),
+            { chain: collection.chain.toLowerCase(), contractAddress: collection.contractAddress ?? undefined }
+          );
           phases.push({
             phaseType: window.phaseType,
             startTime: window.startTime,
@@ -178,14 +183,20 @@ class CollectionsController {
                 : "Wallet is not eligible for this phase.")
           });
         } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          const is404 = msg.includes("404");
           phases.push({
             phaseType: window.phaseType,
             startTime: window.startTime,
             endTime: window.endTime,
             phaseStatus: window.phaseStatus,
+            // Never assume eligible when we cannot verify — 404 means the API
+            // endpoint doesn't exist, not that the wallet is whitelisted.
             eligible: false,
             checked: false,
-            reason: error instanceof Error ? error.message : "Eligibility check failed."
+            reason: is404
+              ? "Eligibility could not be verified via OpenSea API — check manually on opensea.io."
+              : msg
           });
         }
       }
@@ -195,6 +206,7 @@ class CollectionsController {
         walletName: wallet.name,
         walletAddress: wallet.address,
         eligiblePhaseTypes: phases.filter((phase) => phase.eligible).map((phase) => phase.phaseType),
+        unverifiablePhaseTypes: phases.filter((phase) => !phase.checked).map((phase) => phase.phaseType),
         phases
       });
     }
@@ -220,6 +232,17 @@ class CollectionsController {
   async eligibility(@Body() body: EligibilityDto) {
     const client = new OpenSeaClient({ apiKey: this.config.getOrThrow<string>("OPENSEA_API_KEY") });
     return client.checkEligibility(body.slug, body.walletAddress, body.phaseType);
+  }
+
+  @Post(":id/refresh-phases")
+  async refreshPhases(@Param("id") id: string) {
+    const result = await getCollectionWithPhaseData(this.prisma, this.config, id);
+    return {
+      ...result.collection,
+      phaseSource: result.phaseSource,
+      phaseWarning: result.phaseWarning,
+      phaseCheckedAt: result.phaseCheckedAt,
+    };
   }
 
   @Get(":id")

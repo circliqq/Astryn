@@ -223,7 +223,10 @@ export class OpenSeaClient {
           if (!startTime) return [];
           return {
             id: String(item.uuid ?? item.id ?? `${slug}-${index}`),
-            type: this.normalizePhase(String(item.stage_type ?? item.type ?? item.phase_type ?? "public")),
+            type: this.normalizePhase(
+              String(item.stage_type ?? item.type ?? item.phase_type ?? "public"),
+              String(item.name ?? item.title ?? item.stage_name ?? item.label ?? ""),
+            ),
             priceEth,
             startTime,
             endTime: dateStringFrom(item, ["end_time", "endTime", "end_date", "endDate", "ends_at", "endsAt"]),
@@ -257,40 +260,169 @@ export class OpenSeaClient {
     }
   }
 
-  async checkEligibility(slug: string, walletAddress: string, phaseType: MintPhaseType): Promise<EligibilityResult> {
-    // Try multiple endpoint formats — OpenSea's API varies by collection/phase type.
-    const endpoints = [
+  async checkEligibility(
+    slug: string,
+    walletAddress: string,
+    phaseType: MintPhaseType,
+    options?: { chain?: string; contractAddress?: string }
+  ): Promise<EligibilityResult> {
+    const chain = options?.chain?.toLowerCase() ?? "ethereum";
+    const contract = options?.contractAddress;
+
+    // ── Phase 1: try GET eligibility endpoints ────────────────────────────────
+    const getEndpoints = [
       `/drops/${slug}/eligibility?wallet_address=${walletAddress}&phase_type=${phaseType}`,
+      `/drops/${slug}/eligibility?wallet_address=${walletAddress}`,
       `/drops/${slug}/eligibility?wallet=${walletAddress}&phase=${phaseType}`,
       `/drops/${slug}/eligibility/${walletAddress}?phase=${phaseType}`,
+      `/drops/${slug}/allowlist?wallet_address=${walletAddress}`,
+      // Drop data with wallet — some collections embed eligibility here
+      `/drops/${slug}?wallet_address=${walletAddress}`,
+      // Chain + contract specific endpoints (Seadrop v2 / ERC721C)
+      ...(contract ? [
+        `/chain/${chain}/contract/${contract}/drops/eligibility?wallet_address=${walletAddress}&phase_type=${phaseType}`,
+        `/chain/${chain}/contract/${contract}/drops/eligibility?wallet_address=${walletAddress}`,
+        `/chain/${chain}/contract/${contract}/drops/allowlist?wallet_address=${walletAddress}`,
+        `/chain/${chain}/contract/${contract}/seadrop/allowlist?wallet_address=${walletAddress}`,
+      ] : []),
     ];
 
     let data: Record<string, unknown> | null = null;
-    let lastError: unknown;
 
-    for (const endpoint of endpoints) {
+    for (const endpoint of getEndpoints) {
       try {
         data = await this.request<Record<string, unknown>>(endpoint);
         break;
       } catch (err) {
-        lastError = err;
         const msg = err instanceof Error ? err.message : String(err);
-        // Only continue to next endpoint on 404; other errors (429, 5xx) should surface.
+        // Only continue to the next endpoint on 404; surface other errors (429, 5xx) immediately.
         if (!msg.includes("404")) throw err;
       }
     }
 
-    // All endpoints returned 404 — OpenSea doesn't expose a per-wallet check for
-    // this phase type (common for GTD / FCFS / open phases). Treat as eligible so
-    // the user can proceed; they've already verified eligibility on OpenSea itself.
+    // ── Phase 2: GET endpoints all returned 404 — try POST /mint as a dry-run ──
+    // For signed-mint allowlists (Seadrop v2 / ERC721C), OpenSea's backend only
+    // returns signed calldata when the wallet is on the allowlist.
+    // An "not eligible" error → confirmed not eligible.
+    // A successful response with payload → confirmed eligible.
+    // Any other error → still unverifiable.
     if (!data) {
-      return {
-        eligible: phaseType !== "allowlist",
-        phaseType,
-        reason: phaseType === "allowlist"
-          ? "Allowlist eligibility could not be verified via OpenSea API (404). Check OpenSea directly."
-          : "Phase is open — no per-wallet eligibility check required.",
-      };
+      try {
+        // Use the exact body format from OpenSea's official docs:
+        // https://docs.opensea.io/docs/mint-from-a-drop
+        const mintData = await this.request<Record<string, unknown>>(`/drops/${slug}/mint`, {
+          method: "POST",
+          body: JSON.stringify({
+            minter: walletAddress,
+            quantity: 1,
+          }),
+        });
+        // If we get here, the wallet is eligible — OpenSea returned mint data.
+        const payload = mintPayloadFrom(mintData);
+        const proof = stringArrayFrom(mintData, [["proof"], ["merkle_proof"], ["merkleProof"]]);
+        const signature = hexStringFrom(mintData, [["signature"], ["signed_mint", "signature"]]);
+        return {
+          eligible: true,
+          phaseType,
+          reason: "Wallet is eligible (mint data obtained from OpenSea).",
+          payload,
+          proof,
+          signature,
+        };
+      } catch (mintErr) {
+        const mintMsg = mintErr instanceof Error ? mintErr.message : String(mintErr);
+        const mintMsgLower = mintMsg.toLowerCase();
+
+        // Only trust EXPLICIT eligibility keywords — not raw HTTP status codes.
+        // A 400 from an UPCOMING phase means "phase not started yet", NOT "wallet not eligible".
+        // Treating any 4xx as ineligible causes false negatives for upcoming phases.
+        const confirmedNotEligible =
+          mintMsgLower.includes("not eligible") ||
+          mintMsgLower.includes("not whitelisted") ||
+          mintMsgLower.includes("not allowlisted") ||
+          mintMsgLower.includes("not in allowlist") ||
+          mintMsgLower.includes("not on the allowlist") ||
+          mintMsgLower.includes("not on allowlist") ||
+          mintMsgLower.includes("address not") ||
+          mintMsgLower.includes("ineligible") ||
+          mintMsgLower.includes("unauthorized");
+
+        if (confirmedNotEligible) {
+          return {
+            eligible: false,
+            phaseType,
+            reason: mintMsg,
+          };
+        }
+        // Mint endpoint also 404'd or returned a 5xx / ambiguous error.
+        // Fall through to Phase 3.
+      }
+    }
+
+    // ── Phase 3: try fetching the full allowlist and scanning for the wallet ──
+    // Some collections expose the allowlist as a paginated list of addresses.
+    const allowlistEndpoints = [
+      `/drops/${slug}/allowlist`,
+      `/drops/${slug}/allowlist?limit=1000`,
+      ...(contract ? [
+        `/chain/${chain}/contract/${contract}/drops/allowlist`,
+        `/chain/${chain}/contract/${contract}/drops/allowlist?limit=1000`,
+      ] : []),
+    ];
+
+    for (const endpoint of allowlistEndpoints) {
+      try {
+        const listData = await this.request<Record<string, unknown>>(endpoint);
+        // Look for a list of addresses in the response
+        const addresses = this.extractAddressList(listData);
+        if (addresses.length > 0) {
+          const lower = walletAddress.toLowerCase();
+          const eligible = addresses.some((a) => a.toLowerCase() === lower);
+          return {
+            eligible,
+            phaseType,
+            reason: eligible
+              ? "Wallet found in OpenSea allowlist."
+              : "Wallet not found in OpenSea allowlist.",
+          };
+        }
+      } catch {
+        // continue
+      }
+    }
+
+    // ── Phase 4: try stage-specific eligibility (uses drop stages to get IDs) ──
+    try {
+      const dropData = await this.request<Record<string, unknown>>(`/drops/${slug}`);
+      const stages = Array.isArray(dropData.stages) ? dropData.stages : Array.isArray(dropData.phases) ? dropData.phases : [];
+      for (const stage of stages as Record<string, unknown>[]) {
+        const stageId = stage.uuid ?? stage.id ?? stage.stage_id;
+        if (!stageId) continue;
+        const stageEndpoints = [
+          `/drops/${slug}/stages/${stageId}/eligibility?wallet_address=${walletAddress}`,
+          `/drops/${slug}/stages/${stageId}?wallet_address=${walletAddress}`,
+          `/drops/${slug}/phases/${stageId}/eligibility?wallet_address=${walletAddress}`,
+        ];
+        for (const ep of stageEndpoints) {
+          try {
+            const stageData = await this.request<Record<string, unknown>>(ep);
+            const eligible =
+              booleanFrom(stageData, [["eligible"], ["is_eligible"], ["isEligible"]]) ??
+              Boolean(mintPayloadFrom(stageData) ?? stringArrayFrom(stageData, [["proof"]]));
+            return { eligible, phaseType, reason: eligible ? "Wallet is eligible." : "Wallet is not eligible." };
+          } catch (e) {
+            const m = e instanceof Error ? e.message : String(e);
+            if (!m.includes("404")) throw e;
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    // All approaches exhausted — truly unverifiable.
+        throw new Error("404: OpenSea eligibility could not be verified for this phase. Check manually on opensea.io.");
+      }
     }
 
     const payload = mintPayloadFrom(data);
@@ -351,11 +483,8 @@ export class OpenSeaClient {
     const data = await this.request<Record<string, unknown>>(`/drops/${slug}/mint`, {
       method: "POST",
       body: JSON.stringify({
-        walletAddress,
-        wallet_address: walletAddress,
         minter: walletAddress,
         quantity,
-        phase: phaseType
       })
     });
     const payload = mintPayloadFrom(data);
@@ -401,11 +530,33 @@ export class OpenSeaClient {
     return chain.toLowerCase().includes("ethereum") ? "ethereum" : "base";
   }
 
-  private normalizePhase(phase: string): MintPhaseType {
-    const normalized = phase.toLowerCase();
-    if (normalized.includes("allow") || normalized.includes("presale") || normalized.includes("signed")) return "allowlist";
-    if (normalized.includes("gtd")) return "gtd";
-    if (normalized.includes("fcfs")) return "fcfs";
+  // Extract a flat list of 0x addresses from various allowlist response shapes.
+  private extractAddressList(data: Record<string, unknown>): string[] {
+    const candidates = [
+      data.addresses, data.wallets, data.allowlist, data.entries,
+      data.minters, data.eligible_addresses, data.eligible_wallets,
+      (isRecord(data.allowlist) ? (data.allowlist as Record<string, unknown>).addresses : undefined),
+    ];
+    for (const c of candidates) {
+      if (Array.isArray(c) && c.length > 0) {
+        const addrs = c.map((item) =>
+          typeof item === "string" ? item :
+          isRecord(item) ? String(item.address ?? item.wallet ?? item.wallet_address ?? "") : ""
+        ).filter((a) => a.startsWith("0x"));
+        if (addrs.length > 0) return addrs;
+      }
+    }
+    return [];
+  }
+
+  private normalizePhase(phase: string, name = ""): MintPhaseType {
+    // Check both the API stage_type AND the human-readable name.
+    // OpenSea often returns stage_type="allowlist" for GTD/FCFS phases,
+    // but the name field reveals the real intent.
+    const combined = `${phase} ${name}`.toLowerCase();
+    if (combined.includes("gtd") || combined.includes("guaranteed")) return "gtd";
+    if (combined.includes("fcfs") || combined.includes("first come first") || combined.includes("firstcome")) return "fcfs";
+    if (combined.includes("allow") || combined.includes("presale") || combined.includes("signed") || combined.includes("support")) return "allowlist";
     return "public";
   }
 }

@@ -1,8 +1,8 @@
 "use client";
 
-import { Suspense, useMemo, useState, type FormEvent } from "react";
+import { Suspense, useEffect, useMemo, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   CalendarClock,
@@ -19,6 +19,7 @@ import {
 import { AppShell } from "@/components/app-shell";
 import { Badge, Button, Input, Panel, Select } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
+import { formatDateShort } from "@/lib/format-date";
 import {
   buildGasRecommendation,
   DEFAULT_MINT_GAS_UNITS,
@@ -103,6 +104,7 @@ function MintSetupFallback() {
 
 function MintSetupContent() {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const searchParams = useSearchParams();
   const collectionId = searchParams.get("collectionId") ?? "";
 
@@ -120,6 +122,15 @@ function MintSetupContent() {
   const [scheduleMode, setScheduleMode] = useState<"draft" | "phase_start" | "custom">("draft");
   const [scheduleAt, setScheduleAt] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+
+  // ── Per-wallet eligibility ────────────────────────────────────────────────
+  // null = checking, true = eligible, false = not eligible, "unverifiable" = API can't check
+  const [walletEligibilityMap, setWalletEligibilityMap] = useState<Map<string, boolean | "unverifiable" | null>>(new Map());
+  const [isCheckingEligibility, setIsCheckingEligibility] = useState(false);
+  // Manual overrides: wallets the user has confirmed eligible on OpenSea
+  const [manualEligibleMap, setManualEligibleMap] = useState<Set<string>>(new Set());
+  // Global eligibility confirmation for unverifiable collections
+  const [eligibilityConfirmed, setEligibilityConfirmed] = useState(false);
 
   // ── Instant Flipper state ─────────────────────────────────────────────────
   const [flipperEnabled, setFlipperEnabled]         = useState(false);
@@ -159,12 +170,67 @@ function MintSetupContent() {
     return wallets.filter((w) => w.network === collection.chain);
   }, [collection, wallets]);
 
-  const selectedPhase =
-    collection?.phases.find((p) => p.phaseType === phaseType) ??
-    collection?.phases[0] ??
-    null;
+  // Resolve the correct phase record for each logical type.
+  // Since OpenSea's API returns GTD/FCFS/Support all as "allowlist" type, they are stored
+  // as multiple ALLOWLIST phases with different start times, ordered chronologically.
+  // Mapping: GTD → 1st allowlist, FCFS → 2nd allowlist, ALLOWLIST → last allowlist, PUBLIC → public.
+  const selectedPhase = useMemo(() => {
+    if (!collection) return null;
+
+    // Direct match first (works if phases were correctly stored with GTD/FCFS types)
+    const direct = collection.phases.find((p) => p.phaseType === phaseType);
+    if (direct) return direct;
+
+    // Collect all "allowlist family" phases sorted by start time
+    const allowlistFamily = [...collection.phases]
+      .filter((p) => p.phaseType === "ALLOWLIST" || p.phaseType === "GTD" || p.phaseType === "FCFS")
+      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
+
+    if (phaseType === "GTD")       return allowlistFamily[0] ?? null;
+    if (phaseType === "FCFS")      return allowlistFamily[1] ?? allowlistFamily[0] ?? null;
+    if (phaseType === "ALLOWLIST") return allowlistFamily[allowlistFamily.length - 1] ?? allowlistFamily[0] ?? null;
+
+    return collection.phases[0] ?? null;
+  }, [collection, phaseType]);
 
   const eligibility = phaseEligibility(selectedPhase?.phaseType ?? "PUBLIC");
+
+  // Reset confirmation when phase changes
+  useEffect(() => { setEligibilityConfirmed(false); }, [collectionId, phaseType]);
+
+  // ── Auto per-wallet eligibility check when phase/collection changes ───────
+  useEffect(() => {
+    if (!collection || !collectionId || compatibleWallets.length === 0) return;
+    if (phaseType === "PUBLIC") {
+      setWalletEligibilityMap(new Map(compatibleWallets.map((w) => [w.id, true])));
+      return;
+    }
+    setIsCheckingEligibility(true);
+    setWalletEligibilityMap(new Map(compatibleWallets.map((w) => [w.id, null])));
+    apiFetch<{ wallets: Array<{ walletId: string; eligiblePhaseTypes: string[]; unverifiablePhaseTypes?: string[] }> }>(
+      `/collections/${collectionId}/eligibility-matrix`,
+      { method: "POST", body: JSON.stringify({ walletIds: compatibleWallets.map((w) => w.id) }) }
+    )
+      .then((data) => {
+        const map = new Map<string, boolean | "unverifiable">();
+        for (const w of data.wallets) {
+          if (w.eligiblePhaseTypes.includes(phaseType)) {
+            map.set(w.walletId, true);
+          } else if (w.unverifiablePhaseTypes?.includes(phaseType)) {
+            // OpenSea returned 404 — can't confirm either way
+            map.set(w.walletId, "unverifiable");
+          } else {
+            map.set(w.walletId, false);
+          }
+        }
+        setWalletEligibilityMap(map);
+      })
+      .catch(() => {
+        // On error keep map as-is (null = unknown)
+      })
+      .finally(() => setIsCheckingEligibility(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collection, collectionId, phaseType]);
 
   // Effective gas mode for calculations (advanced → balanced multipliers)
   const gasMode: GasMode = gasModeExtended === "advanced" ? "balanced" : gasModeExtended;
@@ -199,7 +265,19 @@ function MintSetupContent() {
   const totalCostPerWallet = (mintPriceEth + gasCostPerWallet) * qty;
   const grandTotal = totalCostPerWallet * Math.max(1, selectedWalletIds.length);
 
-  const canCreate = Boolean(collection && selectedWalletIds.length > 0);
+  // Whether any selected wallet has unverified eligibility for a non-public phase
+  const hasUnverifiedWallets =
+    phaseType !== "PUBLIC" &&
+    selectedWalletIds.some((id) => {
+      const elig = walletEligibilityMap.get(id);
+      return elig !== true; // not confirmed eligible by API
+    });
+
+  const canCreate = Boolean(
+    collection &&
+    selectedWalletIds.length > 0 &&
+    (!hasUnverifiedWallets || eligibilityConfirmed)
+  );
 
   function toggleWallet(id: string) {
     setSelectedWalletIds((cur) =>
@@ -216,11 +294,19 @@ function MintSetupContent() {
           walletIds: selectedWalletIds,
           phaseType,
           gasSettings: effectiveGasSettings,
-          scheduleMode: scheduleMode === "phase_start" ? "phase_start" : "draft",
-          scheduleAt:
-            scheduleMode === "custom" && scheduleAt
-              ? new Date(scheduleAt).toISOString()
-              : undefined,
+          // For "phase_start" we pass the exact stored start time so the backend
+          // doesn't need to re-resolve the phase type (avoids "No matching phase" errors
+          // when GTD/FCFS are stored as ALLOWLIST after a live refresh).
+          scheduleMode: "draft",
+          scheduleAt: (() => {
+            if (scheduleMode === "phase_start" && selectedPhase) {
+              return new Date(selectedPhase.startTime).toISOString();
+            }
+            if (scheduleMode === "custom" && scheduleAt) {
+              return new Date(scheduleAt).toISOString();
+            }
+            return undefined;
+          })(),
           mintQuantity: qty,
           instantFlipper: flipperEnabled ? {
             enabled: true,
@@ -367,6 +453,26 @@ function MintSetupContent() {
                 </div>
               )}
 
+              {/* Eligibility confirmation checkbox — shown when API can't verify */}
+              {hasUnverifiedWallets && selectedWalletIds.length > 0 && (
+                <label className="mx-5 mt-3 flex cursor-pointer items-start gap-3 rounded-md border border-graphite-600 bg-graphite-800 px-3 py-3">
+                  <input
+                    type="checkbox"
+                    checked={eligibilityConfirmed}
+                    onChange={(e) => setEligibilityConfirmed(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-brand"
+                  />
+                  <div>
+                    <p className="text-[12px] font-medium text-graphite-100">
+                      I've verified eligibility on OpenSea
+                    </p>
+                    <p className="mt-0.5 text-[11px] text-graphite-500">
+                      Bot couldn't auto-verify — tick this to confirm selected wallets are eligible and unlock task creation.
+                    </p>
+                  </div>
+                </label>
+              )}
+
               <div className="grid gap-2 p-5 md:grid-cols-2 xl:grid-cols-3">
                 {compatibleWallets.length === 0 ? (
                   <div className="notice md:col-span-2 xl:col-span-3">No compatible wallets found.</div>
@@ -394,20 +500,63 @@ function MintSetupContent() {
                           {wallet.address.slice(0, 12)}...
                         </p>
                         {/* Per-wallet phase eligibility indicator */}
-                        <div className="mt-2 flex items-center gap-1.5">
-                          {eligibility.isVerified ? (
-                            <CheckCircle2 size={11} className="text-status-green-text" />
-                          ) : (
-                            <AlertTriangle size={11} className="text-amber-400" />
-                          )}
-                          <span
-                            className={`text-[10px] font-medium ${
-                              eligibility.isVerified ? "text-status-green-text" : "text-amber-400"
-                            }`}
-                          >
-                            {eligibility.label}
-                          </span>
-                        </div>
+                        {(() => {
+                          const walletElig = walletEligibilityMap.get(wallet.id);
+                          const isChecking = isCheckingEligibility || walletElig === null;
+                          const isManuallyEligible = manualEligibleMap.has(wallet.id);
+                          const isEligible = walletElig === true || isManuallyEligible;
+                          const isUnverifiable = walletElig === "unverifiable" && !isManuallyEligible;
+                          // undefined = map not populated yet (phase is PUBLIC or data not loaded)
+                          if (walletElig === undefined) return null;
+                          return (
+                            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
+                              {isChecking ? (
+                                <span className="text-[10px] font-medium text-graphite-500">Checking...</span>
+                              ) : isEligible ? (
+                                <>
+                                  <CheckCircle2 size={11} className="text-status-green-text" />
+                                  <span className="text-[10px] font-medium text-status-green-text">
+                                    {isManuallyEligible && walletElig !== true ? "Eligible (manual)" : "Eligible"}
+                                  </span>
+                                  {isManuallyEligible && walletElig !== true && (
+                                    <button
+                                      className="text-[10px] text-graphite-500 underline ml-1"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setManualEligibleMap((prev) => {
+                                          const next = new Set(prev);
+                                          next.delete(wallet.id);
+                                          return next;
+                                        });
+                                      }}
+                                    >
+                                      undo
+                                    </button>
+                                  )}
+                                </>
+                              ) : isUnverifiable ? (
+                                <>
+                                  <AlertTriangle size={11} className="text-amber-400" />
+                                  <span className="text-[10px] font-medium text-amber-400">Unverifiable</span>
+                                  <button
+                                    className="text-[10px] font-medium text-graphite-400 underline ml-1"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setManualEligibleMap((prev) => new Set([...prev, wallet.id]));
+                                    }}
+                                  >
+                                    Mark eligible
+                                  </button>
+                                </>
+                              ) : (
+                                <>
+                                  <AlertTriangle size={11} className="text-red-400" />
+                                  <span className="text-[10px] font-medium text-red-400">Not Eligible</span>
+                                </>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </button>
                     );
                   })
@@ -431,9 +580,10 @@ function MintSetupContent() {
                     value={phaseType}
                     onChange={(e) => setPhaseType(e.target.value as CollectionPhase["phaseType"])}
                   >
-                    {(["PUBLIC", "ALLOWLIST", "GTD", "FCFS"] as const).map((p) => (
-                      <option key={p} value={p}>{p}</option>
-                    ))}
+                    <option value="GTD">GTD</option>
+                    <option value="FCFS">FCFS</option>
+                    <option value="ALLOWLIST">ALLOWLIST</option>
+                    <option value="PUBLIC">PUBLIC</option>
                   </Select>
                 </label>
 
@@ -583,7 +733,7 @@ function MintSetupContent() {
                 <div className="notice text-[12px]">
                   <CalendarClock size={14} className="mb-2 text-graphite-500" />
                   {selectedPhase
-                    ? `Phase starts ${new Date(selectedPhase.startTime).toLocaleString()}.`
+                    ? `Phase starts ${formatDateShort(selectedPhase.startTime)}.`
                     : "Select a collection to review phase timing."}
                 </div>
 

@@ -123,7 +123,25 @@ export function resolveScheduleAtFromPhase(
   phases: Array<{ phaseType: MintPhaseType; startTime: Date; endTime: Date | null }>,
   phaseType: MintPhaseType
 ) {
-  const matchingWindow = resolvePhaseWindow(phases, phaseType);
+  let matchingWindow = resolvePhaseWindow(phases, phaseType);
+
+  // GTD / FCFS are OpenSea allowlist variants — live phase refresh may store them as ALLOWLIST.
+  // Fall back to ALLOWLIST if the specific type isn't found.
+  if (!matchingWindow && (phaseType === "GTD" || phaseType === "FCFS")) {
+    matchingWindow = resolvePhaseWindow(phases, "ALLOWLIST");
+  }
+
+  // If still no match (e.g. live refresh normalised all phases differently), fall back to
+  // any non-PUBLIC upcoming/live phase, then any upcoming/live phase.
+  if (!matchingWindow) {
+    const allWindows = resolvePhaseWindows(phases);
+    const active = allWindows.filter((w) => w.phaseStatus !== "ENDED");
+    matchingWindow =
+      active.find((w) => w.phaseType !== "PUBLIC") ??
+      active.find((w) => w.phaseType === "PUBLIC") ??
+      null;
+  }
+
   if (!matchingWindow) {
     throw new BadRequestException("No matching phase found for this collection.");
   }
@@ -143,7 +161,9 @@ export function phaseTypeToPrisma(phaseType: string): MintPhaseType {
 
 export function toOpenSeaPhase(phaseType: MintPhaseType): "public" | "allowlist" | "gtd" | "fcfs" {
   const normalized = phaseType.toLowerCase();
-  if (normalized === "allowlist" || normalized === "gtd" || normalized === "fcfs") return normalized;
+  // GTD and FCFS are OpenSea allowlist variants — the eligibility API only accepts "allowlist".
+  // Sending "gtd" / "fcfs" returns 404 which gets misread as "eligible" for everyone.
+  if (normalized === "gtd" || normalized === "fcfs" || normalized === "allowlist") return "allowlist";
   return "public";
 }
 

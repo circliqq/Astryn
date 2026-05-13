@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ClipboardCheck, Search } from "lucide-react";
+import { ClipboardCheck, ExternalLink, Search } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge, Button, Input, Panel } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
+import { formatDateFull } from "@/lib/format-date";
 
 type Network = "BASE" | "ETHEREUM";
 type PhaseType = "PUBLIC" | "ALLOWLIST" | "GTD" | "FCFS";
@@ -106,7 +107,7 @@ function outcomeTone(phase: WalletPhase): "green" | "yellow" | "slate" {
 }
 
 function formatDate(value: string) {
-  return new Date(value).toLocaleString();
+  return formatDateFull(value);
 }
 
 export default function WhitelistCheckerPage() {
@@ -373,6 +374,18 @@ export default function WhitelistCheckerPage() {
                                 <span className="text-[11px] text-graphite-500">{formatDate(phase.startTime)}</span>
                               </div>
                               <p className="mt-2 text-[12px] text-graphite-400">{phase.reason}</p>
+                              {!phase.checked && (
+                                <a
+                                  href={`https://opensea.io/collection/${matrix.collectionSlug}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="mt-2 flex items-center gap-1 text-[11px] font-medium text-brand hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  <ExternalLink size={10} />
+                                  Check on OpenSea
+                                </a>
+                              )}
                             </div>
                           ))}
                         </div>

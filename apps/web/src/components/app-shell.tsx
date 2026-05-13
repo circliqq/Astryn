@@ -9,6 +9,7 @@ import { Button } from "./ui";
 import { applyAppPreferences, readAppSettings } from "@/lib/app-settings";
 import { apiFetch, clearToken, getToken } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { getUserTimezone } from "@/lib/format-date";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 interface WalletStub { id: string; status: string }
@@ -28,6 +29,32 @@ function Dot({ tone }: { tone: "green" | "yellow" | "red" | "muted" }) {
       )}
     />
   );
+}
+
+// ── Live clock ────────────────────────────────────────────────────────────
+function LiveClock() {
+  const [time, setTime] = useState("");
+
+  useEffect(() => {
+    function tick() {
+      const tz = getUserTimezone();
+      setTime(
+        new Intl.DateTimeFormat("en-US", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          timeZone: tz,
+          timeZoneName: "short",
+        }).format(new Date())
+      );
+    }
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!time) return null;
+  return <span className="hidden items-center font-mono text-[11px] text-graphite-400 md:flex">{time}</span>;
 }
 
 // ── Live status bar ───────────────────────────────────────────────────────
@@ -159,6 +186,7 @@ export function AppShell({ title, children }: { title: string; children: React.R
           </div>
 
           <div className="flex items-center gap-2">
+            <LiveClock />
             <LiveStatusBar />
             <Button
               type="button"

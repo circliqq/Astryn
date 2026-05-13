@@ -7,6 +7,7 @@ export interface AppSettings {
   appearance: {
     themeMode: ThemeMode;
     compactMode: boolean;
+    timezone: string;
   };
   notifications: {
     mintStatus: boolean;
@@ -34,7 +35,8 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   },
   appearance: {
     themeMode: "dark",
-    compactMode: false
+    compactMode: false,
+    timezone: "UTC"
   },
   notifications: {
     mintStatus: true,

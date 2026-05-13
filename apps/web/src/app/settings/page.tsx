@@ -38,8 +38,8 @@ export default function SettingsPage() {
       <div className="space-y-5">
         <div className="grid gap-4 md:grid-cols-3">
           <div className="metric-card"><p className="label-caps">Theme</p><p className="metric-value text-[20px] capitalize">{settings.appearance.themeMode}</p></div>
+          <div className="metric-card"><p className="label-caps">Timezone</p><p className="metric-value text-[14px]">{settings.appearance.timezone ?? "UTC"}</p></div>
           <div className="metric-card"><p className="label-caps">Privacy</p><p className="metric-value">{settings.privacy.hideWalletAddresses ? "On" : "Off"}</p></div>
-          <div className="metric-card"><p className="label-caps">Digest</p><p className="metric-value">{settings.notifications.weeklyDigest ? "On" : "Off"}</p></div>
         </div>
 
         <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
@@ -64,6 +64,44 @@ export default function SettingsPage() {
                     <option value="light">Light</option>
                     <option value="system">System</option>
                   </Select>
+                </label>
+                <label>
+                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Timezone</span>
+                  <Select
+                    value={settings.appearance.timezone ?? "UTC"}
+                    onChange={(event) => updateSection("appearance", { timezone: event.target.value })}
+                  >
+                    <option value="UTC">UTC — Coordinated Universal Time</option>
+                    <optgroup label="Asia">
+                      <option value="Asia/Kolkata">IST — India (GMT+5:30)</option>
+                      <option value="Asia/Dubai">GST — Dubai (GMT+4)</option>
+                      <option value="Asia/Singapore">SGT — Singapore (GMT+8)</option>
+                      <option value="Asia/Tokyo">JST — Tokyo (GMT+9)</option>
+                      <option value="Asia/Seoul">KST — Seoul (GMT+9)</option>
+                      <option value="Asia/Shanghai">CST — China (GMT+8)</option>
+                      <option value="Asia/Bangkok">ICT — Bangkok (GMT+7)</option>
+                      <option value="Asia/Karachi">PKT — Pakistan (GMT+5)</option>
+                      <option value="Asia/Dhaka">BST — Bangladesh (GMT+6)</option>
+                    </optgroup>
+                    <optgroup label="Europe">
+                      <option value="Europe/London">GMT/BST — London</option>
+                      <option value="Europe/Paris">CET/CEST — Paris / Berlin</option>
+                      <option value="Europe/Istanbul">TRT — Istanbul (GMT+3)</option>
+                      <option value="Europe/Moscow">MSK — Moscow (GMT+3)</option>
+                    </optgroup>
+                    <optgroup label="Americas">
+                      <option value="America/New_York">ET — New York</option>
+                      <option value="America/Chicago">CT — Chicago</option>
+                      <option value="America/Denver">MT — Denver</option>
+                      <option value="America/Los_Angeles">PT — Los Angeles</option>
+                      <option value="America/Sao_Paulo">BRT — São Paulo (GMT-3)</option>
+                    </optgroup>
+                    <optgroup label="Pacific / Other">
+                      <option value="Australia/Sydney">AEST — Sydney</option>
+                      <option value="Pacific/Auckland">NZST — Auckland</option>
+                    </optgroup>
+                  </Select>
+                  <p className="mt-1 text-[10px] text-graphite-500">Controls all phase times and the header clock.</p>
                 </label>
                 <ToggleRow
                   label="Compact mode"
