@@ -27,6 +27,7 @@ export interface CollectionInfo {
 
 export interface CollectionMarketStats {
   floorPriceEth?: string;
+  bestOfferEth?: string;
   oneDayVolumeEth?: string;
   totalVolumeEth?: string;
 }
@@ -144,7 +145,10 @@ export class OpenSeaClient {
   }
 
   async getCollectionStats(slug: string): Promise<CollectionMarketStats> {
-    const data = await this.request<Record<string, unknown>>(`/collections/${slug}/stats`);
+    const [data, bestOfferEth] = await Promise.all([
+      this.request<Record<string, unknown>>(`/collections/${slug}/stats`),
+      this.fetchBestOfferEth(slug),
+    ]);
     return {
       floorPriceEth: ethStatFrom(data, [
         ["total", "floor_price"],
@@ -154,6 +158,13 @@ export class OpenSeaClient {
         ["floor_price"],
         ["floorPrice"],
         ["floor"]
+      ]),
+      bestOfferEth: bestOfferEth ?? ethStatFrom(data, [
+        ["total", "top_bid"],
+        ["total", "topBid"],
+        ["stats", "top_bid"],
+        ["top_bid"],
+        ["topBid"],
       ]),
       oneDayVolumeEth: ethStatFrom(data, [
         ["intervals", "one_day", "volume"],
@@ -169,6 +180,31 @@ export class OpenSeaClient {
         ["totalVolume"]
       ])
     };
+  }
+
+  // Fetch the best collection-wide offer from OpenSea's offers endpoint.
+  // Returns ETH value as string, or undefined if unavailable.
+  private async fetchBestOfferEth(slug: string): Promise<string | undefined> {
+    try {
+      const data = await this.request<Record<string, unknown>>(
+        `/offers/collection/${slug}/best`,
+      );
+      // Response shape: { price: { value: "...", decimals: 18 } } or { current_price: "..." }
+      const price = isRecord(data.price) ? data.price : null;
+      if (price) {
+        const value = price.value ?? price.amount;
+        const decimals = typeof price.decimals === "number" ? price.decimals : 18;
+        if (typeof value === "string" || typeof value === "number") {
+          const eth = Number(value) / Math.pow(10, decimals);
+          return eth.toString();
+        }
+      }
+      // Fallback: current_price in wei
+      if (typeof data.current_price === "string") {
+        return (Number(data.current_price) / 1e18).toString();
+      }
+    } catch { /* best-effort — non-fatal */ }
+    return undefined;
   }
 
   async getDropPhases(slug: string): Promise<DropPhase[]> {
@@ -525,46 +561,4 @@ function booleanFrom(data: Record<string, unknown>, paths: string[][]) {
     }
   }
 
-  return undefined;
-}
-
-function stringArrayFrom(data: Record<string, unknown>, paths: string[][]) {
-  for (const path of paths) {
-    let current: unknown = data;
-    for (const key of path) {
-      if (!isRecord(current)) {
-        current = undefined;
-        break;
-      }
-      current = current[key];
-    }
-    if (Array.isArray(current)) return current.map(String).filter((item) => item.startsWith("0x"));
-  }
-
-  return undefined;
-}
-
-function normalizeWeiString(value: string) {
-  if (!value.includes(".")) return value;
-  const [whole, fractional = ""] = value.split(".");
-  const paddedFractional = `${fractional}000000000000000000`.slice(0, 18);
-  return `${BigInt(whole || "0") * 1_000_000_000_000_000_000n + BigInt(paddedFractional || "0")}`;
-}
-
-function ethStatFrom(data: Record<string, unknown>, paths: string[][]) {
-  const value = stringFrom(data, paths);
-  if (value == null) return undefined;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
-  return parsed.toString();
-}
-
-function normalizeTimestampString(value: string) {
-  const date = new Date(value);
-  if (!Number.isNaN(date.getTime())) return Math.floor(date.getTime() / 1000).toString();
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+  retur

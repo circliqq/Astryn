@@ -128,27 +128,4 @@ class BotWarfareController {
   async getStats(@CurrentUser() _user: CurrentUserType) {
     const [total, adjusted, recent] = await Promise.all([
       this.prisma.botCompetitionLog.count(),
-      this.prisma.botCompetitionLog.count({ where: { gasAdjusted: true } }),
-      this.prisma.botCompetitionLog.findMany({
-        orderBy: { detectedAt: "desc" },
-        take: 10,
-        select: { competitorCount: true, detectedAt: true, network: true },
-      }),
-    ]);
-
-    const avgCompetitors =
-      recent.length > 0
-        ? recent.reduce((sum, l) => sum + l.competitorCount, 0) / recent.length
-        : 0;
-
-    return { total, adjusted, avgCompetitors: Math.round(avgCompetitors), recent };
-  }
-}
-
-@Module({
-  imports: [EventsModule],
-  controllers: [BotWarfareController],
-  providers: [BotWarfareService],
-  exports: [BotWarfareService],
-})
-export class BotWarfareModule {}
+      this.prisma.botCompetitionL
