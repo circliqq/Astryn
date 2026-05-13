@@ -5,6 +5,7 @@ import { MintPhaseType, type Prisma } from "@prisma/client";
 import { IsArray, IsBoolean, IsIn, IsNumber, IsObject, IsOptional, IsString, Max, Min, IsDateString } from "class-validator";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
+import { PlanGuard, ProOrAbove } from "../auth/plan.guard.js";
 import { EventsGateway } from "../events/events.gateway.js";
 import { EventsModule } from "../events/events.module.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -104,7 +105,8 @@ class WalletGasOverrideDto {
 }
 
 @Controller("mint-tasks")
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, PlanGuard)
+@ProOrAbove()
 class MintTasksController {
   constructor(
     private readonly prisma: PrismaService,

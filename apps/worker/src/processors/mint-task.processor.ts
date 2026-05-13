@@ -12,8 +12,10 @@ import {
 } from "@mint-copilot/blockchain";
 import {
   applyGasGuardian,
+  buildBumpedFees,
   estimateTransactionGasCost,
   fetchCurrentGas,
+  presetGasSettings,
   resolveGasFees,
   type GasSettings,
 } from "@mint-copilot/gas-engine";
@@ -37,6 +39,14 @@ const ZERO_BYTES32 = "0x00000000000000000000000000000000000000000000000000000000
 const SEAPORT_CHAIN_IDS: Record<string, number> = { ethereum: 1, base: 8453 };
 const OPENSEA_FEE_BPS = 250n; // 2.5%
 const TRANSFER_EVENT_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
+
+// Minimal ABI for reading supply from ERC721 contracts.
+// Covers totalSupply / maxSupply / _maxSupply naming conventions.
+const ERC721_SUPPLY_ABI = [
+  { type: "function", name: "totalSupply", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "maxSupply",   stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "_maxSupply",  stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+] as const;
 
 const SEAPORT_GET_COUNTER_ABI = [
   {
@@ -177,7 +187,15 @@ export async function executeMintTask(
         chainName: network,
         priority: index + 1,
       })),
-      { broadcastTimeoutMs: numberEnv("MINT_BROADCAST_TIMEOUT_MS", 2_500) },
+      {
+        // Dynamic per-endpoint timeout: ping × multiplier, clamped to [min, max].
+        // e.g. Quiknode 25ms ping → 250ms timeout, Chainstack 76ms → 760ms timeout.
+        // Falls back to MINT_BROADCAST_TIMEOUT_MS only if no ping data yet.
+        dynamicTimeoutMultiplier: numberEnv("MINT_BROADCAST_TIMEOUT_MULTIPLIER", 10),
+        dynamicTimeoutMinMs: numberEnv("MINT_BROADCAST_TIMEOUT_MIN_MS", 300),
+        dynamicTimeoutMaxMs: numberEnv("MINT_BROADCAST_TIMEOUT_MAX_MS", 1_200),
+        broadcastTimeoutMs: numberEnv("MINT_BROADCAST_TIMEOUT_MS", 800),
+      },
     );
     const receiptConfirmations = Math.max(
       1,
@@ -247,7 +265,7 @@ export async function executeMintTask(
             resolveGasSettings(task.gasSettingsJson, taskWallet.gasSettingsJson),
             competition,
           );
-          const gasFees = resolveGasFees(currentGas, walletSettings);
+          const gasFees = resolveGasFees(currentGas, walletSettings, network);
           if (!gasFees.baseFeeCovered) {
             throw new Error(
               "Configured max fee per gas is less than the current block base fee.",
@@ -471,21 +489,27 @@ export async function executeMintTask(
           }).catch(() => undefined);
 
           // All broadcast targets run in parallel at T=0.
-          // Ethereum: RPC pool + Flashbots (if key set) + free builders (if enabled).
+          // Ethereum: RPC pool + Flashbots bundle (if key set) + free builders (if enabled).
           // Base: RPC pool only (no Flashbots/builders on Base).
           const flashbotsAuthKey = process.env["ETH_FLASHBOTS_AUTH_KEY"] as Hex | undefined;
           const buildersEnabled = /^(1|true|yes)$/i.test(process.env["ETH_BUILDERS_ENABLED"] ?? "");
           const isEthereum = network === "ethereum";
 
+          // Fetch current block number for Flashbots bundle targeting.
+          // Non-blocking: if it fails we skip bundles gracefully.
+          const currentBlockNumber = isEthereum && flashbotsAuthKey
+            ? await client.getBlockNumber().catch(() => null)
+            : null;
+
           const [broadcasts] = await Promise.all([
             pool.broadcastUntilAccepted(network, preparedMint.signedTx),
-            isEthereum && flashbotsAuthKey
-              ? sendFlashbotsPrivateTx(preparedMint.signedTx, flashbotsAuthKey)
-                  .then((hash) => {
-                    if (hash) {
+            isEthereum && flashbotsAuthKey && currentBlockNumber != null
+              ? sendFlashbotsBundle(preparedMint.signedTx, flashbotsAuthKey, currentBlockNumber)
+                  .then((bundleHash) => {
+                    if (bundleHash) {
                       void log(prisma, task.id, "info",
-                        `Flashbots private TX submitted for wallet ${shortAddress(preparedMint.walletAddress)}.`,
-                        { flashbotsHash: hash, walletId: preparedMint.walletId },
+                        `Flashbots bundle submitted for wallet ${shortAddress(preparedMint.walletAddress)} targeting blocks ${currentBlockNumber + 1n}–${currentBlockNumber + 2n}.`,
+                        { bundleHash, walletId: preparedMint.walletId },
                       ).catch(() => undefined);
                     }
                   })
@@ -563,6 +587,61 @@ export async function executeMintTask(
       return;
     }
 
+    // ── Supply watcher: cancel tx if contract sells out before block inclusion ──
+    // Polls totalSupply() on the NFT contract every 300ms after broadcast.
+    // If supply exhausted, replaces each pending mint tx with a cheap self-transfer
+    // (same nonce, higher gas) so the mint tx is dropped and gas is saved.
+    const contractAddress = task.collection.contractAddress as `0x${string}`;
+    const supplyCheckEnabled = /^(1|true|yes)$/i.test(
+      process.env["MINT_SUPPLY_WATCH_ENABLED"] ?? "true",
+    );
+    const supplyWatchIntervalMs = numberEnv("MINT_SUPPLY_WATCH_INTERVAL_MS", 300);
+
+    // Shared cancellation signal — flipped when supply = 0 detected.
+    let supplyExhausted = false;
+
+    const watchSupply = async () => {
+      if (!supplyCheckEnabled) return;
+      try {
+        const [totalSupply, maxSupply] = await Promise.all([
+          client.readContract({
+            address: contractAddress,
+            abi: ERC721_SUPPLY_ABI,
+            functionName: "totalSupply",
+          }) as Promise<bigint>,
+          client.readContract({
+            address: contractAddress,
+            abi: ERC721_SUPPLY_ABI,
+            functionName: "maxSupply",
+          }).catch(() =>
+            // Some contracts use different names — fall back gracefully.
+            client.readContract({
+              address: contractAddress,
+              abi: ERC721_SUPPLY_ABI,
+              functionName: "_maxSupply",
+            }).catch(() => null)
+          ) as Promise<bigint | null>,
+        ]);
+        if (maxSupply != null && totalSupply >= maxSupply) {
+          supplyExhausted = true;
+          void log(prisma, task.id, "warn",
+            `Supply exhausted on-chain (${totalSupply}/${maxSupply}) — cancelling pending mint txs to save gas.`,
+          ).catch(() => undefined);
+        }
+      } catch {
+        // non-fatal — supply check best-effort only
+      }
+    };
+
+    // Poll supply until exhausted or all receipts received.
+    let supplyWatchStopped = false;
+    const supplyWatchLoop = (async () => {
+      while (!supplyWatchStopped && !supplyExhausted) {
+        await delay(supplyWatchIntervalMs);
+        await watchSupply();
+      }
+    })();
+
     const receiptResults: ReceiptOutcome[] = await Promise.all(
       broadcasted.map(async (item): Promise<ReceiptOutcome> => {
         try {
@@ -570,9 +649,134 @@ export async function executeMintTask(
             where: { id: item.transactionId },
             data: { status: "PENDING" },
           });
+
+          // ── Gas bump loop ──────────────────────────────────────────────
+          // If tx is not included in the first block, bump gas and re-broadcast
+          // on the same nonce. MINT_BUMP_WINDOW_MS controls how long we keep
+          // trying (default: 1 block time — 12s ETH, 3s Base).
+          // After the window, we stop bumping and wait for the original receipt.
+          const gasSettings = resolveGasSettings(task.gasSettingsJson, null);
+          const bumpWindowMs = numberEnv(
+            "MINT_BUMP_WINDOW_MS",
+            network === "ethereum" ? 13_000 : 3_000,
+          );
+          const bumpDeadline = Date.now() + bumpWindowMs;
+          let activeMint = item;
+
+          if (gasSettings.gasBumpEnabled) {
+            let bumpAttempt = 0;
+            while (bumpAttempt < gasSettings.maxBumpAttempts && Date.now() < bumpDeadline) {
+              // Wait one block before deciding to bump.
+              const blockWaitMs = network === "ethereum" ? 12_000 : 2_000;
+              await delay(Math.min(blockWaitMs, Math.max(0, bumpDeadline - Date.now())));
+              if (Date.now() >= bumpDeadline) break;
+
+              // If supply exhausted — cancel the pending tx instead of bumping.
+              // Send a cheap self-transfer with the same nonce to replace the mint tx.
+              if (supplyExhausted) {
+                try {
+                  const privateKey = await decryptPrivateKey(
+                    activeMint.walletCrypto,
+                    { masterKey: env("ENCRYPTION_MASTER_KEY") },
+                  );
+                  const cancelTx = await signTransaction(
+                    { chainName: network, rpcUrl: primary.url },
+                    privateKey,
+                    {
+                      to: activeMint.walletAddress,
+                      data: "0x",
+                      value: 0n,
+                      gas: 21_000n,
+                      nonce: activeMint.nonce,
+                      // 120% of current maxFee to outbid the mint tx.
+                      maxFeePerGas: (activeMint.maxFeePerGas * 120n) / 100n,
+                      maxPriorityFeePerGas: (activeMint.maxPriorityFeePerGas * 120n) / 100n,
+                    },
+                  );
+                  await pool.broadcastUntilAccepted(network, cancelTx);
+                  void log(prisma, task.id, "warn",
+                    `Cancelled mint tx for wallet ${shortAddress(activeMint.walletAddress)} — supply exhausted.`,
+                    { nonce: activeMint.nonce, walletId: activeMint.walletId },
+                  ).catch(() => undefined);
+                } catch {
+                  // cancel attempt failed — let receipt timeout handle it
+                }
+                break;
+              }
+
+              // Check if already confirmed — no bump needed.
+              try {
+                const receipt = await client.getTransactionReceipt({
+                  hash: activeMint.hash,
+                });
+                if (receipt) break; // confirmed — exit bump loop
+              } catch {
+                // not yet confirmed — proceed with bump
+              }
+
+              bumpAttempt += 1;
+              try {
+                const bumpedFees = buildBumpedFees({
+                  currentMaxFeePerGas: activeMint.maxFeePerGas,
+                  currentPriorityFeePerGas: activeMint.maxPriorityFeePerGas,
+                  attempt: bumpAttempt,
+                  settings: gasSettings,
+                });
+
+                const privateKey = await decryptPrivateKey(
+                  activeMint.walletCrypto,
+                  { masterKey: env("ENCRYPTION_MASTER_KEY") },
+                );
+                const bumpedSignedTx = await signTransaction(
+                  { chainName: network, rpcUrl: primary.url },
+                  privateKey,
+                  {
+                    to: activeMint.mintPayloadForRetry.to,
+                    data: activeMint.mintPayloadForRetry.data,
+                    value: activeMint.mintPayloadForRetry.value,
+                    gas: activeMint.gasLimit,
+                    nonce: activeMint.nonce,
+                    maxFeePerGas: bumpedFees.maxFeePerGas,
+                    maxPriorityFeePerGas: bumpedFees.maxPriorityFeePerGas,
+                  },
+                );
+
+                // Rebroadcast bumped tx to all channels in parallel.
+                const [bumpBroadcasts] = await Promise.all([
+                  pool.broadcastUntilAccepted(network, bumpedSignedTx),
+                  network === "ethereum" && process.env["ETH_BUILDERS_ENABLED"]
+                    ? sendToFreeBuilders(bumpedSignedTx).catch(() => undefined)
+                    : Promise.resolve(),
+                ]);
+
+                const bumpSuccess = bumpBroadcasts.find((r) => r.ok && r.hash);
+                if (bumpSuccess?.hash) {
+                  void log(prisma, task.id, "info",
+                    `Gas bump #${bumpAttempt} accepted for wallet ${shortAddress(activeMint.walletAddress)}.`,
+                    {
+                      bumpedHash: bumpSuccess.hash,
+                      maxFeePerGas: bumpedFees.maxFeePerGas.toString(),
+                      maxPriorityFeePerGas: bumpedFees.maxPriorityFeePerGas.toString(),
+                    },
+                  ).catch(() => undefined);
+                  activeMint = {
+                    ...activeMint,
+                    signedTx: bumpedSignedTx,
+                    hash: bumpSuccess.hash,
+                    maxFeePerGas: bumpedFees.maxFeePerGas,
+                    maxPriorityFeePerGas: bumpedFees.maxPriorityFeePerGas,
+                  };
+                }
+              } catch {
+                break; // bump limit reached or signing failed — stop bumping
+              }
+            }
+          }
+          // ── End gas bump loop ──────────────────────────────────────────
+
           const receipt = await waitForReceipt(
             { chainName: network, rpcUrl: primary.url },
-            item.hash,
+            activeMint.hash,
             {
               confirmations: receiptConfirmations,
               timeoutMs: receiptTimeoutMs,
@@ -638,6 +842,10 @@ export async function executeMintTask(
         }
       }),
     );
+
+    // Stop supply watcher — all receipts received.
+    supplyWatchStopped = true;
+    await supplyWatchLoop;
 
     const acceptedMints = receiptResults.filter((r) => r.status !== "failed").length;
     const confirmedMints = receiptResults.filter((r) => r.status === "confirmed").length;
@@ -1248,41 +1456,71 @@ async function log(
 //   ETH_FLASHBOTS_AUTH_KEY=0x...   (any ETH private key — for auth only)
 //   ETH_BUILDERS_ENABLED=true      (enables beaverbuild + rsync + titan)
 
-async function sendFlashbotsPrivateTx(signedTx: Hex, authKey: Hex): Promise<Hex | null> {
+async function sendFlashbotsBundle(
+  signedTx: Hex,
+  authKey: Hex,
+  targetBlockNumber: bigint,
+): Promise<Hex | null> {
   const endpoint = "https://relay.flashbots.net";
-  const body = JSON.stringify({
-    jsonrpc: "2.0",
-    id: 1,
-    method: "eth_sendPrivateTransaction",
-    params: [{ tx: signedTx, preferences: { fast: true } }],
-  });
 
-  const account = privateKeyToAccount(authKey);
-  const sig = await account.signMessage({
-    message: { raw: keccak256(toBytes(body)) },
-  });
-  const authHeader = `${account.address}:${sig}`;
+  // eth_sendBundle targets a SPECIFIC block — guaranteed inclusion attempt
+  // in that block rather than "whenever" with eth_sendPrivateTransaction.
+  // We target currentBlock+1 (next block) and also currentBlock+2 as fallback
+  // by sending two bundles in parallel.
+  const sendBundle = async (blockNumber: bigint) => {
+    const body = JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "eth_sendBundle",
+      params: [
+        {
+          txs: [signedTx],
+          blockNumber: `0x${blockNumber.toString(16)}`,
+        },
+      ],
+    });
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Flashbots-Signature": authHeader,
-    },
-    body,
-    signal: AbortSignal.timeout(3_000),
-  });
+    const account = privateKeyToAccount(authKey);
+    const sig = await account.signMessage({
+      message: { raw: keccak256(toBytes(body)) },
+    });
+    const authHeader = `${account.address}:${sig}`;
 
-  const json = await res.json() as { result?: string; error?: { message: string } };
-  if (json.error) throw new Error(`Flashbots: ${json.error.message}`);
-  return (json.result ?? null) as Hex | null;
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Flashbots-Signature": authHeader,
+      },
+      body,
+      signal: AbortSignal.timeout(3_000),
+    });
+
+    const json = await res.json() as { result?: { bundleHash?: string }; error?: { message: string } };
+    if (json.error) throw new Error(`Flashbots bundle: ${json.error.message}`);
+    return (json.result?.bundleHash ?? null) as Hex | null;
+  };
+
+  // Target next 3 blocks in parallel — N+1, N+2, N+3 for max coverage.
+  const [hash] = await Promise.allSettled([
+    sendBundle(targetBlockNumber + 1n),
+    sendBundle(targetBlockNumber + 2n),
+    sendBundle(targetBlockNumber + 3n),
+  ]);
+
+  return hash.status === "fulfilled" ? hash.value : null;
 }
 
 // Free builders — no auth required, standard JSON-RPC.
+// Combined coverage: beaverbuild ~40% + rsync ~10% + Titan ~15%
+//                 + Ultra Sound ~8% + Agnostic ~5% + BuildAI ~5% ≈ 83%
 const FREE_BUILDER_ENDPOINTS = [
-  { name: "beaverbuild", url: "https://rpc.beaverbuild.org" },
+  { name: "beaverbuild",   url: "https://rpc.beaverbuild.org" },
   { name: "rsync-builder", url: "https://rsync-builder.xyz" },
   { name: "Titan Builder", url: "https://rpc.titanbuilder.xyz" },
+  { name: "Ultra Sound",   url: "https://rpc.ultrasound.money" },
+  { name: "Agnostic",      url: "https://agnostic-relay.net" },
+  { name: "BuildAI",       url: "https://buildai.flashbots.net" },
 ] as const;
 
 async function sendToFreeBuilders(signedTx: Hex): Promise<void> {
@@ -1305,6 +1543,176 @@ async function sendToFreeBuilders(signedTx: Hex): Promise<void> {
 }
 // ──────────────────────────────────────────────────────────────────────────
 
+// ── Utility helpers ───────────────────────────────────────────────────────
+
+function env(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function numberEnv(name: string, fallback: number) {
+  return numberOrDefault(process.env[name], fallback);
+}
+
+function bigintEnv(name: string, fallback: bigint) {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  try { return BigInt(raw); } catch { return fallback; }
+}
+
+function numberOrDefault(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function numberOrUndefined(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function shortAddress(address: string) {
+  return `${address.slice(0, 6)}...${address.slice(-4)}`;
+}
+
+function rawErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isReceiptPending(error: unknown) {
+  return /timeout|timed out|not found|could not find/i.test(rawErrorMessage(error));
+}
+
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+}
+
+function toOpenSeaPhase(phaseType: string) {
+  const normalized = phaseType.toLowerCase();
+  if (normalized === "allowlist" || normalized === "gtd" || normalized === "fcfs") return normalized;
+  return "public";
+}
+
+function rpcUrlsFor(network: "base" | "ethereum"): string[] {
+  const prefix = network === "base" ? "BASE" : "ETH";
+  return [
+    env(`${prefix}_RPC_PRIMARY`),
+    process.env[`${prefix}_RPC_BACKUP_1`],
+    process.env[`${prefix}_RPC_BACKUP_2`],
+  ].filter(Boolean) as string[];
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+      }
+    }),
+  );
+  return results;
+}
+
+// ── Bot Warfare ───────────────────────────────────────────────────────────
+
+interface CompetitionResult {
+  detected: boolean;
+  competitorCount: number;
+  recommendedMaxFeeGwei: number;
+  spikeFactor: number;
+}
+
+async function detectBotCompetition(
+  prisma: PrismaClient,
+  mintTaskId: string,
+  collectionSlug: string,
+  chain: "BASE" | "ETHEREUM",
+  currentGas: { baseFeePerGas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
+): Promise<CompetitionResult> {
+  // Tuned thresholds: detect earlier (1.3×) and boost harder (1.5×).
+  // Use 1min snapshot window instead of 5min — faster spike detection.
+  const SPIKE_THRESHOLD = numberOrDefault(process.env["BOT_WARFARE_SPIKE_THRESHOLD"], 1.3);
+  const BOOST_MULTIPLIER = numberOrDefault(process.env["BOT_WARFARE_BOOST_MULTIPLIER"], 1.5);
+
+  let detected = false;
+  let competitorCount = 0;
+  let spikeFactor = 1;
+  let recommendedMaxFeeGwei = Number(currentGas.maxFeePerGas / 1_000_000_000n);
+
+  try {
+    // 1min window (was 5min) — catches gas spikes much faster.
+    const oneMinuteAgo = new Date(Date.now() - 60 * 1_000);
+    const snapshots = await prisma.gasSnapshot.findMany({
+      where: { network: chain, createdAt: { gte: oneMinuteAgo } },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    });
+
+    if (snapshots.length >= 2) {
+      const avgBaseFee =
+        snapshots.reduce((sum, s) => sum + BigInt(s.baseFeeWei), 0n) /
+        BigInt(snapshots.length);
+
+      if (avgBaseFee > 0n) {
+        spikeFactor = Number(currentGas.baseFeePerGas * 100n / avgBaseFee) / 100;
+        if (spikeFactor >= SPIKE_THRESHOLD) {
+          detected = true;
+          competitorCount = Math.max(1, Math.round((spikeFactor - 1) * 5));
+          recommendedMaxFeeGwei = Math.ceil(
+            Number(currentGas.maxFeePerGas / 1_000_000_000n) * BOOST_MULTIPLIER,
+          );
+        }
+      }
+    }
+  } catch {
+    // non-fatal — continue mint even if competition check fails
+  }
+
+  await prisma.botCompetitionLog
+    .create({
+      data: {
+        mintTaskId,
+        network: chain,
+        collectionSlug,
+        competitorCount,
+        detectedGasWei: currentGas.baseFeePerGas.toString(),
+        recommendedGasWei: (BigInt(recommendedMaxFeeGwei) * 1_000_000_000n).toString(),
+        gasAdjusted: detected,
+      },
+    })
+    .catch(() => undefined);
+
+  return { detected, competitorCount, recommendedMaxFeeGwei, spikeFactor };
+}
+
+function applyCompetitionBoost(
+  settings: GasSettings,
+  competition: CompetitionResult,
+): GasSettings {
+  if (!competition.detected) return settings;
+  // Boost both maxFee AND priorityFee proportional to spike factor (capped 3×).
+  const priorityBoost = Math.min(competition.spikeFactor, 3);
+  return {
+    ...settings,
+    maxFeeGwei: Math.max(settings.maxFeeGwei, competition.recommendedMaxFeeGwei),
+    priorityFeeGwei: settings.priorityFeeGwei * priorityBoost,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+
 function resolveTargetAt(runAt: string | undefined, scheduledAt: Date | null) {
   if (runAt) {
     const targetAt = new Date(runAt);
@@ -1318,14 +1726,18 @@ function resolveGasSettings(
   walletSettings: unknown,
 ): GasSettings {
   const settings = (walletSettings ?? taskSettings ?? {}) as Partial<GasSettings>;
+  const mode = settings.mode ?? "aggressive";
+  // Fall back to engine presets — these are conservative live-gas-aware values,
+  // NOT the old hardcoded 200/15 gwei floors that caused massive over-gassing.
+  const preset = presetGasSettings(mode);
   return {
-    mode: settings.mode ?? "aggressive",
-    maxFeeGwei: numberOrDefault(settings.maxFeeGwei, 200),
-    priorityFeeGwei: numberOrDefault(settings.priorityFeeGwei, 15),
-    maxTotalGasCostEth: numberOrDefault(settings.maxTotalGasCostEth, 0.02),
+    mode,
+    maxFeeGwei: numberOrDefault(settings.maxFeeGwei, preset.maxFeeGwei),
+    priorityFeeGwei: numberOrDefault(settings.priorityFeeGwei, preset.priorityFeeGwei),
+    maxTotalGasCostEth: numberOrDefault(settings.maxTotalGasCostEth, preset.maxTotalGasCostEth),
     gasGuardianEnabled: settings.gasGuardianEnabled ?? true,
-    gasBumpEnabled: settings.gasBumpEnabled ?? true,
-    maxBumpAttempts: numberOrDefault(settings.maxBumpAttempts, 5),
+    gasBumpEnabled: settings.gasBumpEnabled ?? preset.gasBumpEnabled,
+    maxBumpAttempts: numberOrDefault(settings.maxBumpAttempts, preset.maxBumpAttempts),
   };
 }
 
@@ -1810,15 +2222,22 @@ function rpcUrlsFor(network: "base" | "ethereum"): string[] {
 }
 
 async function sleepUntil(targetAt: Date) {
-  // Wake up 20ms early and spin at 1ms intervals for sub-millisecond precision.
+  // MINT_EARLY_BROADCAST_MS: broadcast this many ms BEFORE the target open time.
+  // Ethereum block timestamps have ~15s tolerance — broadcasting 500–1000ms early
+  // means our tx lands in the mempool before competing bots fire at T=0.
+  // Safe default: 800ms. Set to 0 to disable.
+  const earlyMs = numberEnv("MINT_EARLY_BROADCAST_MS", 800);
+
+  // Wake up 20ms before (earlyMs + 20) and spin at 1ms intervals for precision.
+  const fireAt = targetAt.getTime() - earlyMs;
   const wakeupMs = 20;
-  const coarseWait = targetAt.getTime() - Date.now() - wakeupMs;
+  const coarseWait = fireAt - Date.now() - wakeupMs;
   if (coarseWait > 0) {
     await delay(coarseWait);
   }
 
-  while (Date.now() < targetAt.getTime()) {
-    await delay(Math.min(1, targetAt.getTime() - Date.now()));
+  while (Date.now() < fireAt) {
+    await delay(Math.min(1, fireAt - Date.now()));
   }
 }
 
@@ -1900,9 +2319,16 @@ function applyCompetitionBoost(
   competition: CompetitionResult,
 ): GasSettings {
   if (!competition.detected) return settings;
+  // Boost both maxFee ceiling AND priorityFee floor.
+  // maxFee alone isn't enough — during a gas war, priority fee determines
+  // inclusion order. baseFee can spike before mempool priority catches up
+  // (bots about to flood), so we preemptively raise priorityFeeGwei proportional
+  // to the spike factor (capped at 3× to prevent runaway on extreme spikes).
+  const priorityBoost = Math.min(competition.spikeFactor, 3);
   return {
     ...settings,
     maxFeeGwei: Math.max(settings.maxFeeGwei, competition.recommendedMaxFeeGwei),
+    priorityFeeGwei: settings.priorityFeeGwei * priorityBoost,
   };
 }
 

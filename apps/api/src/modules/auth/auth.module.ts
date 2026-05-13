@@ -4,6 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 import { IsEmail, IsString, MinLength } from "class-validator";
 import { CurrentUser } from "./current-user.decorator.js";
 import { AuthGuard } from "./auth.guard.js";
+import { RoleGuard } from "./role.guard.js";
+import { PlanGuard } from "./plan.guard.js";
 
 class EmailPasswordDto {
   @IsEmail()
@@ -128,7 +130,7 @@ class AuthController {
 
 @Module({
   controllers: [AuthController],
-  providers: [AuthGuard],
-  exports: [AuthGuard]
+  providers: [AuthGuard, RoleGuard, PlanGuard],
+  exports: [AuthGuard, RoleGuard, PlanGuard]
 })
 export class AuthModule {}

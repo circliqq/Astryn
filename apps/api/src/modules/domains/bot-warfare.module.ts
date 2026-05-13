@@ -7,13 +7,15 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { createPublicClient, http } from "viem";
+import { http, createPublicClient } from "viem";
 import { base, mainnet } from "viem/chains";
+import { RpcPool, type RpcEndpointConfig } from "@mint-copilot/rpc-pool";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
 import { EventsGateway } from "../events/events.gateway.js";
 import { EventsModule } from "../events/events.module.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+import { chainNameForNetwork, rpcUrlsForNetwork } from "./rpc-failover.js";
 
 @Injectable()
 export class BotWarfareService {
@@ -29,17 +31,31 @@ export class BotWarfareService {
     collectionSlug?: string,
   ): Promise<{ competitorCount: number; recommendedGasWei: string; gasAdjusted: boolean }> {
     const isBase = network === "BASE";
-    const rpcUrl = this.config.get<string>(isBase ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY");
+    const chainName = chainNameForNetwork(network);
+    const rpcUrls = rpcUrlsForNetwork(network, this.config);
 
     let detectedGasWei: string | undefined;
     let recommendedGasWei: string;
     let competitorCount = 0;
 
     try {
-      if (rpcUrl) {
+      if (rpcUrls.length > 0) {
+        // Build a pool and health-check all endpoints, then pick the fastest healthy one
+        const pool = new RpcPool(
+          rpcUrls.map((url, index): RpcEndpointConfig => ({
+            id: `${chainName}-${index}`,
+            name: index === 0 ? "Primary" : `Backup ${index}`,
+            url,
+            chainName,
+            priority: index + 1,
+          })),
+        );
+        await pool.checkAll(chainName);
+        const best = pool.selectPrimary(chainName);
+
         const client = createPublicClient({
           chain: isBase ? base : mainnet,
-          transport: http(rpcUrl),
+          transport: http(best.url),
         });
 
         const block = await client.getBlock({ blockTag: "pending" });
@@ -51,7 +67,7 @@ export class BotWarfareService {
         const baseFee = block.baseFeePerGas ?? 0n;
         detectedGasWei = baseFee.toString();
 
-        // Recommend 20% above current base fee when competition is detected
+        // Recommend above current base fee scaled to competition level
         const multiplier = competitorCount > 100 ? 150n : competitorCount > 20 ? 130n : 120n;
         recommendedGasWei = ((baseFee * multiplier) / 100n).toString();
       } else {

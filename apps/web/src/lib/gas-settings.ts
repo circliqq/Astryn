@@ -35,33 +35,52 @@ export const GAS_SETTINGS_STORAGE_KEY = "mc_gas_settings";
 export const WALLET_GAS_STORAGE_KEY = "mc_wallet_gas";
 export const DEFAULT_MINT_GAS_UNITS = 350_000;
 
+/**
+ * Fallback presets used ONLY when live gas data is unavailable.
+ * These are conservative but realistic — they do NOT act as cost floors
+ * when live data is present (buildGasRecommendation ignores these when gas is live).
+ */
 export const GAS_PRESETS: Record<GasMode, GasSettings> = {
   safe: {
     mode: "safe",
-    maxFeeGwei: 35,
-    priorityFeeGwei: 1,
-    maxTotalGasCostEth: 0.003,
+    maxFeeGwei: 3,
+    priorityFeeGwei: 0.05,
+    maxTotalGasCostEth: 0.001,
     gasBumpEnabled: true,
     maxBumpAttempts: 2
   },
   balanced: {
     mode: "balanced",
-    maxFeeGwei: 50,
-    priorityFeeGwei: 2,
-    maxTotalGasCostEth: 0.005,
+    maxFeeGwei: 8,
+    priorityFeeGwei: 0.1,
+    maxTotalGasCostEth: 0.002,
     gasBumpEnabled: true,
     maxBumpAttempts: 3
   },
   aggressive: {
     mode: "aggressive",
-    maxFeeGwei: 200,
-    priorityFeeGwei: 15,
-    maxTotalGasCostEth: 0.02,
+    maxFeeGwei: 25,
+    priorityFeeGwei: 0.5,
+    maxTotalGasCostEth: 0.005,
     gasBumpEnabled: true,
     maxBumpAttempts: 5
   }
 };
 
+/**
+ * How much to scale above live gas per mode.
+ *
+ * maxFeeBaseMultiplier — how many × baseFee to set as buffer room
+ *   Safe:       1.15×  (covers ~2 block base-fee increases)
+ *   Balanced:   1.5×   (covers ~5 block spike)
+ *   Aggressive: 2.0×   (covers hard spike, still wins in competition)
+ *
+ * priorityMultiplier — scales live priorityFee; the absolute floor below
+ *   prevents setting 0-priority when mempool is empty.
+ *
+ * capMultiplier — maxCap = maxFeeGwei × gasUnits × capMultiplier.
+ *   Purely computed from live gas — no hardcoded ETH floor anymore.
+ */
 const MODE_FACTORS: Record<
   GasMode,
   {
@@ -73,38 +92,43 @@ const MODE_FACTORS: Record<
   }
 > = {
   safe: {
-    maxFeeBaseMultiplier: 1.3,
-    priorityMultiplier: 1.05,
-    capMultiplier: 1.15,
+    maxFeeBaseMultiplier: 1.15,
+    priorityMultiplier: 1.1,
+    capMultiplier: 1.1,
     label: "Safe",
     bumpAttempts: 2
   },
   balanced: {
-    maxFeeBaseMultiplier: 2,
-    priorityMultiplier: 1.45,
-    capMultiplier: 1.35,
+    maxFeeBaseMultiplier: 1.5,
+    priorityMultiplier: 1.3,
+    capMultiplier: 1.15,
     label: "Balanced",
     bumpAttempts: 3
   },
   aggressive: {
-    maxFeeBaseMultiplier: 3,
-    priorityMultiplier: 2.25,
-    capMultiplier: 1.7,
+    maxFeeBaseMultiplier: 2.0,
+    priorityMultiplier: 1.5,
+    capMultiplier: 1.2,
     label: "Aggressive",
     bumpAttempts: 5
   }
 };
 
+/**
+ * Absolute minimum priority fee — only kicks in when live priority is
+ * near zero (empty mempool). Kept very small so it never dominates maxFee.
+ * Old values (1–4 gwei on ETH) were the main cause of over-gassing.
+ */
 const MIN_PRIORITY_BY_NETWORK: Record<NetworkKey, Record<GasMode, number>> = {
   base: {
-    safe: 0.003,
-    balanced: 0.006,
-    aggressive: 0.01
+    safe:       0.0005,
+    balanced:   0.001,
+    aggressive: 0.002
   },
   ethereum: {
-    safe: 1,
-    balanced: 2,
-    aggressive: 4
+    safe:       0.01,
+    balanced:   0.05,
+    aggressive: 0.1
   }
 };
 
@@ -173,13 +197,24 @@ export function buildGasRecommendation(input: {
   const gasUnits = sanitizeGasUnits(input.estimatedGasUnits);
   const walletCount = Math.max(1, Math.floor(input.walletCount ?? 1));
   const factors = MODE_FACTORS[input.mode];
+
+  // Priority: scale live priority, but never go below the tiny absolute floor.
+  // We do NOT use liveMaxGwei as a floor — that value is already 2×baseFee
+  // from the node and would inflate maxFee before our multipliers even apply.
   const minPriorityGwei = MIN_PRIORITY_BY_NETWORK[input.network][input.mode];
   const priorityFeeGwei = roundGwei(Math.max(livePriorityGwei * factors.priorityMultiplier, minPriorityGwei));
-  const maxFeeCandidate = liveBaseGwei * factors.maxFeeBaseMultiplier + priorityFeeGwei;
-  const maxFeeGwei = roundGwei(Math.max(maxFeeCandidate, liveMaxGwei ?? 0, liveBaseGwei + priorityFeeGwei));
+
+  // maxFee: baseFee × buffer + priority. Pure live-data calculation.
+  const maxFeeGwei = roundGwei(liveBaseGwei * factors.maxFeeBaseMultiplier + priorityFeeGwei);
+
+  // Effective gwei = what we actually expect to pay (base + priority, capped at maxFee).
   const effectiveGwei = Math.min(maxFeeGwei, liveBaseGwei + priorityFeeGwei);
   const estimatedGasCostEth = ethForGas(gasUnits, effectiveGwei);
-  const maxGasCostEth = roundEth(Math.max(ethForGas(gasUnits, maxFeeGwei) * factors.capMultiplier, GAS_PRESETS[input.mode].maxTotalGasCostEth));
+
+  // Max cap: purely computed from live maxFee × safety buffer.
+  // Old code had Math.max(..., GAS_PRESETS[mode].maxTotalGasCostEth) which locked
+  // in a hardcoded ETH floor (e.g. 0.003 ETH) even when real cost was 10× lower.
+  const maxGasCostEth = roundEth(ethForGas(gasUnits, maxFeeGwei) * factors.capMultiplier);
 
   return {
     mode: input.mode,
@@ -200,9 +235,19 @@ export function buildGasRecommendation(input: {
     totalGasCostEth: estimatedGasCostEth * walletCount,
     walletCount,
     label: factors.label,
-    detail: `${factors.label} sets max fee near ${maxFeeGwei} gwei and caps gas around ${maxGasCostEth} ETH per wallet.`
+    detail: `Live base ${liveBaseGwei.toFixed(4)} gwei → max fee ${maxFeeGwei} gwei (${factors.maxFeeBaseMultiplier}× buffer). Est. cost ${estimatedGasCostEth.toFixed(6)} ETH, cap ${maxGasCostEth.toFixed(6)} ETH per wallet.`
   };
 }
+
+/**
+ * Network-relative thresholds for auto-recommending a gas mode.
+ * Old thresholds (15 / 45 gwei) were ETH-mainnet-historic and made everything
+ * "safe" on Base (where base fees are <0.01 gwei) and at today's low ETH gas.
+ */
+const RECOMMEND_THRESHOLDS: Record<NetworkKey, { balanced: number; aggressive: number }> = {
+  base:     { balanced: 0.01,  aggressive: 0.05  },
+  ethereum: { balanced: 5,     aggressive: 20    },
+};
 
 export function recommendGasMode(input: {
   gas: GasQuote | undefined;
@@ -214,7 +259,11 @@ export function recommendGasMode(input: {
   const baseGwei = gweiFromWei(input.gas.baseFeePerGas);
   if (baseGwei == null) return null;
 
-  const mode: GasMode = baseGwei < 15 ? "safe" : baseGwei < 45 ? "balanced" : "aggressive";
+  const { balanced, aggressive } = RECOMMEND_THRESHOLDS[input.network];
+  const mode: GasMode =
+    baseGwei >= aggressive ? "aggressive" :
+    baseGwei >= balanced   ? "balanced"   : "safe";
+
   return buildGasRecommendation({
     gas: input.gas,
     network: input.network,

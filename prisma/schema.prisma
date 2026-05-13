@@ -13,6 +13,12 @@ enum Network {
   ETHEREUM
 }
 
+enum SubscriptionPlan {
+  FREE
+  PRO
+  ELITE
+}
+
 enum MintPhaseType {
   PUBLIC
   ALLOWLIST
@@ -59,6 +65,13 @@ model User {
   email           String             @unique
   displayName     String?
   role            String             @default("user")
+  plan            SubscriptionPlan   @default(FREE)
+  planExpiresAt   DateTime?
+  bannedAt        DateTime?
+  banReason       String?
+  lastSeenAt      DateTime?
+  lastSeenIp      String?
+  riskScore       Int                @default(0)
   createdAt       DateTime           @default(now())
   updatedAt       DateTime           @updatedAt
   sessions        Session[]
@@ -77,6 +90,18 @@ model User {
   swapOrders         SwapOrder[]
   sweepAlerts        SweepAlert[]
   mintAlerts         MintAlert[]
+  supportTickets     SupportTicket[]
+  supportMessages    SupportTicketMessage[]
+  fraudFlags         FraudFlag[]            @relation("FraudFlagSubject")
+  fraudFlagsCreated  FraudFlag[]            @relation("FraudFlagCreator")
+  userBans           UserBan[]              @relation("UserBanSubject")
+  userBansIssued     UserBan[]              @relation("UserBanAdmin")
+  usageMetrics       UsageMetric[]
+  featureFlagsUpdated FeatureFlag[]         @relation("FeatureFlagUpdater")
+
+  @@index([role])
+  @@index([bannedAt])
+  @@index([lastSeenAt])
 }
 
 model Session {
@@ -658,4 +683,143 @@ model MintAlert {
 
   @@index([userId])
   @@index([enabled, mintStartTime])
+}
+
+// ── Support Tickets ───────────────────────────────────────────────────────
+
+enum SupportTicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_USER
+  RESOLVED
+  CLOSED
+}
+
+enum SupportTicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+model SupportTicket {
+  id          String                 @id @default(uuid())
+  userId      String
+  subject     String
+  status      SupportTicketStatus    @default(OPEN)
+  priority    SupportTicketPriority  @default(MEDIUM)
+  category    String?                // e.g. "billing", "minting", "wallets", "other"
+  assignedTo  String?                // admin user id (free-form for now)
+  internalNotes String?
+  closedAt    DateTime?
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  user        User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages    SupportTicketMessage[]
+
+  @@index([userId, status])
+  @@index([status, priority])
+  @@index([assignedTo])
+}
+
+model SupportTicketMessage {
+  id        String        @id @default(uuid())
+  ticketId  String
+  authorId  String?       // null for system messages
+  authorRole String       @default("user")   // user | admin | system
+  body      String
+  internal  Boolean       @default(false)    // admin-only note, not shown to user
+  createdAt DateTime      @default(now())
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author    User?         @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+}
+
+// ── Feature Flags ─────────────────────────────────────────────────────────
+
+model FeatureFlag {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  description String?
+  enabled     Boolean  @default(false)
+  rolloutPct  Int      @default(0)        // 0-100, % of users that see the flag when enabled
+  valueJson   Json?                       // optional structured payload (e.g. config)
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  updatedBy   User?    @relation("FeatureFlagUpdater", fields: [updatedById], references: [id], onDelete: SetNull)
+
+  @@index([enabled])
+}
+
+// ── Fraud / Abuse ─────────────────────────────────────────────────────────
+
+enum FraudFlagStatus {
+  OPEN
+  ACKNOWLEDGED
+  DISMISSED
+  ACTIONED
+}
+
+enum FraudFlagSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+model FraudFlag {
+  id           String            @id @default(uuid())
+  userId       String
+  rule         String            // e.g. "multi_account_same_ip", "rapid_signup", "key_reuse"
+  severity     FraudFlagSeverity @default(MEDIUM)
+  status       FraudFlagStatus   @default(OPEN)
+  detailsJson  Json
+  createdById  String?           // admin who manually flagged (null if auto)
+  resolvedAt   DateTime?
+  resolvedNote String?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  user         User              @relation("FraudFlagSubject", fields: [userId], references: [id], onDelete: Cascade)
+  createdBy    User?             @relation("FraudFlagCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([userId, status])
+  @@index([status, severity])
+  @@index([rule, createdAt])
+}
+
+// ── Bans ──────────────────────────────────────────────────────────────────
+
+model UserBan {
+  id         String    @id @default(uuid())
+  userId     String
+  adminId    String?
+  reason     String
+  expiresAt  DateTime?
+  active     Boolean   @default(true)
+  liftedAt   DateTime?
+  liftedNote String?
+  createdAt  DateTime  @default(now())
+  user       User      @relation("UserBanSubject", fields: [userId], references: [id], onDelete: Cascade)
+  admin      User?     @relation("UserBanAdmin", fields: [adminId], references: [id], onDelete: SetNull)
+
+  @@index([userId, active])
+  @@index([active, expiresAt])
+}
+
+// ── Usage Metrics (daily aggregates) ──────────────────────────────────────
+
+model UsageMetric {
+  id        String   @id @default(uuid())
+  userId    String?  // null = system-wide aggregate
+  metric    String   // e.g. "active", "mints_attempted", "mints_success", "sniper_runs"
+  value     Int      @default(0)
+  date      DateTime @db.Date
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, metric, date])
+  @@index([metric, date])
+  @@index([date])
 }

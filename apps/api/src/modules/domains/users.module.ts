@@ -17,10 +17,11 @@ class UsersController {
 
   @Get("me")
   async me(@CurrentUser() user: CurrentUserType) {
-    const profile = await this.prisma.user.findUnique({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const profile = await (this.prisma.user.findUnique as any)({
       where: { id: user.id },
-      select: { id: true, email: true, displayName: true, role: true }
-    });
+      select: { id: true, email: true, displayName: true, role: true, plan: true, planExpiresAt: true }
+    }) as { id: string; email: string; displayName: string | null; role: string; plan: string; planExpiresAt: Date | null } | null;
     return profile ?? user;
   }
 

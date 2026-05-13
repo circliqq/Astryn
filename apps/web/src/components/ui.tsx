@@ -100,6 +100,23 @@ export function Select({ className, ...props }: React.SelectHTMLAttributes<HTMLS
   );
 }
 
+export function Textarea({ className, ...props }: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
+  return (
+    <textarea
+      className={cn(
+        "rounded-md border border-graphite-700 bg-graphite-800",
+        "px-3 py-2 text-[13px] text-graphite-100 placeholder:text-graphite-500",
+        "transition-colors",
+        "focus:border-brand focus:outline-none focus:shadow-focus-brand",
+        "disabled:cursor-not-allowed disabled:opacity-50",
+        "resize-vertical min-h-[100px]",
+        className
+      )}
+      {...props}
+    />
+  );
+}
+
 export function Divider({ className }: { className?: string }) {
   return <div className={cn("h-px bg-graphite-700", className)} />;
 }

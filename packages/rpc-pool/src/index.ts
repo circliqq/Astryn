@@ -27,6 +27,13 @@ export interface BroadcastResult {
 
 export interface RpcPoolOptions {
   broadcastTimeoutMs?: number;
+  // Multiplier applied to measured ping latency to derive per-endpoint broadcast
+  // timeout (e.g. 10 → Quiknode 25ms ping gets 250ms timeout).
+  // Result is clamped to [dynamicTimeoutMinMs, dynamicTimeoutMaxMs].
+  // When set, this overrides broadcastTimeoutMs for healthy endpoints.
+  dynamicTimeoutMultiplier?: number;
+  dynamicTimeoutMinMs?: number;
+  dynamicTimeoutMaxMs?: number;
 }
 
 export class RpcPool {
@@ -74,8 +81,16 @@ export class RpcPool {
 
   selectPrimary(chainName: ChainName): RpcEndpointConfig {
     const endpoints = this.endpointsFor(chainName);
-    const healthy = endpoints.find((endpoint) => this.health.get(endpoint.id)?.status === "healthy");
-    return healthy ?? endpoints[0];
+    // Select the healthy endpoint with the lowest latency (latency-first routing)
+    const healthyEndpoints = endpoints.filter(
+      (endpoint) => this.health.get(endpoint.id)?.status === "healthy"
+    );
+    healthyEndpoints.sort((a, b) => {
+      const la = this.health.get(a.id)?.latencyMs ?? Infinity;
+      const lb = this.health.get(b.id)?.latencyMs ?? Infinity;
+      return la - lb;
+    });
+    return healthyEndpoints[0] ?? endpoints[0];
   }
 
   async parallelBroadcast(chainName: ChainName, serializedTransaction: Hex): Promise<BroadcastResult[]> {
@@ -114,13 +129,29 @@ export class RpcPool {
     });
   }
 
+  // Derive a broadcast timeout for a specific endpoint.
+  // If dynamicTimeoutMultiplier is set, use: clamp(ping * multiplier, min, max).
+  // Falls back to the static broadcastTimeoutMs, then 800ms.
+  private timeoutFor(endpoint: RpcEndpointConfig): number | undefined {
+    const multiplier = this.options.dynamicTimeoutMultiplier;
+    if (multiplier) {
+      const latency = this.health.get(endpoint.id)?.latencyMs;
+      if (latency != null) {
+        const min = this.options.dynamicTimeoutMinMs ?? 300;
+        const max = this.options.dynamicTimeoutMaxMs ?? 1_200;
+        return Math.min(max, Math.max(min, Math.round(latency * multiplier)));
+      }
+    }
+    return this.options.broadcastTimeoutMs;
+  }
+
   private async broadcastToEndpoint(endpoint: RpcEndpointConfig, serializedTransaction: Hex): Promise<BroadcastResult> {
     try {
       const hash = await sendRawTransaction(
         {
           chainName: endpoint.chainName,
           rpcUrl: endpoint.url,
-          timeoutMs: this.options.broadcastTimeoutMs
+          timeoutMs: this.timeoutFor(endpoint),
         },
         serializedTransaction
       );

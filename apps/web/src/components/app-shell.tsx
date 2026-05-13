@@ -43,8 +43,8 @@ function LiveStatusBar() {
     refetchInterval: 60_000,
   });
   const { data: gas } = useQuery<GasResult>({
-    queryKey: ["gas-current", "base"],
-    queryFn: () => apiFetch<GasResult>("/gas/current?network=base"),
+    queryKey: ["gas-current", "ethereum"],
+    queryFn: () => apiFetch<GasResult>("/gas/current?network=ethereum"),
     refetchInterval: 15_000,
   });
 
@@ -54,9 +54,13 @@ function LiveStatusBar() {
   const healthyRpc   = rpc.filter((r) => r.status === "healthy").length;
   const allRpcOk     = rpc.length > 0 && healthyRpc === rpc.length;
   const someRpcBad   = rpc.length > 0 && healthyRpc < rpc.length;
-  const baseFeeGwei  = gas ? (Number(BigInt(gas.baseFeePerGas)) / 1e9).toFixed(1) : null;
-  const gasHigh      = baseFeeGwei !== null && Number(baseFeeGwei) >= 50;
-  const gasMid       = baseFeeGwei !== null && Number(baseFeeGwei) >= 10 && !gasHigh;
+  const rawGwei      = gas ? Number(BigInt(gas.baseFeePerGas)) / 1e9 : null;
+  // Use 3 decimal places at low gas (<1 gwei), 1 decimal place otherwise
+  const baseFeeGwei  = rawGwei !== null
+    ? rawGwei < 1 ? rawGwei.toFixed(3) : rawGwei.toFixed(1)
+    : null;
+  const gasHigh      = rawGwei !== null && rawGwei >= 50;
+  const gasMid       = rawGwei !== null && rawGwei >= 10 && !gasHigh;
 
   return (
     <div className="hidden items-center gap-4 text-[12px] text-graphite-400 md:flex">

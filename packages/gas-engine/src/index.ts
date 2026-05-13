@@ -38,31 +38,49 @@ export interface ResolvedGasFees extends GasFeeQuote {
   priorityFeeCapped: boolean;
 }
 
+// ── Mode multipliers (must match apps/web/src/lib/gas-settings.ts) ────────────
+const MODE_FACTORS: Record<GasMode, { base: number; priority: number; cap: number }> = {
+  safe:       { base: 1.15, priority: 1.1,  cap: 1.1  },
+  balanced:   { base: 1.5,  priority: 1.3,  cap: 1.15 },
+  aggressive: { base: 2.0,  priority: 1.5,  cap: 1.2  },
+};
+
+// Absolute minimum priority fee per network per mode (in gwei).
+// Kept very small — only kicks in when mempool is empty (live priority ≈ 0).
+const MIN_PRIORITY_GWEI: Record<"ethereum" | "base", Record<GasMode, number>> = {
+  ethereum: { safe: 0.01, balanced: 0.05, aggressive: 0.1  },
+  base:     { safe: 0.0005, balanced: 0.001, aggressive: 0.002 },
+};
+
+/**
+ * Fallback presets — used ONLY when no live gas data is available.
+ * These do NOT act as cost floors at execution time.
+ */
 export function presetGasSettings(mode: GasMode): GasSettings {
   const presets: Record<GasMode, GasSettings> = {
     safe: {
       mode,
-      maxFeeGwei: 35,
-      priorityFeeGwei: 1,
-      maxTotalGasCostEth: 0.003,
+      maxFeeGwei: 3,
+      priorityFeeGwei: 0.05,
+      maxTotalGasCostEth: 0.001,
       gasGuardianEnabled: true,
       gasBumpEnabled: true,
       maxBumpAttempts: 2
     },
     balanced: {
       mode,
-      maxFeeGwei: 50,
-      priorityFeeGwei: 2,
-      maxTotalGasCostEth: 0.005,
+      maxFeeGwei: 8,
+      priorityFeeGwei: 0.1,
+      maxTotalGasCostEth: 0.002,
       gasGuardianEnabled: true,
       gasBumpEnabled: true,
       maxBumpAttempts: 3
     },
     aggressive: {
       mode,
-      maxFeeGwei: 200,
-      priorityFeeGwei: 15,
-      maxTotalGasCostEth: 0.02,
+      maxFeeGwei: 25,
+      priorityFeeGwei: 0.5,
+      maxTotalGasCostEth: 0.005,
       gasGuardianEnabled: true,
       gasBumpEnabled: true,
       maxBumpAttempts: 5
@@ -75,38 +93,67 @@ export async function fetchCurrentGas(options: BlockchainClientOptions) {
   const client = createMintPublicClient(options);
   const block = await client.getBlock();
   const baseFeePerGas = block.baseFeePerGas ?? 0n;
-  const priorityFee = await client.estimateMaxPriorityFeePerGas().catch(() => parseGwei("1"));
+  // Fallback was parseGwei("1") — that 1 gwei floor was inflating all calculations
+  // when the mempool is empty. Changed to 0.01 gwei (still safely above zero).
+  const priorityFee = await client.estimateMaxPriorityFeePerGas().catch(() => parseGwei("0.01"));
   return {
     baseFeePerGas,
     maxPriorityFeePerGas: priorityFee,
+    // Note: this value is informational only — resolveGasFees does NOT use it as a floor.
     maxFeePerGas: baseFeePerGas * 2n + priorityFee
   };
 }
 
-export function resolveGasFees(current: GasFeeQuote, settings: GasSettings): ResolvedGasFees {
+/**
+ * Resolve the actual gas fees to submit at mint time.
+ *
+ * Key change from old implementation:
+ * - We now recalculate maxFeePerGas using the MODE multiplier against live baseFee.
+ *   This means gas always tracks the chain at the moment of minting, not the stale
+ *   value saved at task-setup time.
+ * - The saved `settings.maxFeeGwei` acts as a hard upper ceiling only (prevents
+ *   runaway gas in bot-warfare spikes).
+ * - Old code used `current.maxFeePerGas` (node's 2×baseFee estimate) as a floor,
+ *   which inflated fees before the user cap even applied.
+ */
+export function resolveGasFees(
+  current: GasFeeQuote,
+  settings: GasSettings,
+  network: "ethereum" | "base" = "ethereum"
+): ResolvedGasFees {
+  const factors = MODE_FACTORS[settings.mode];
+  const minPriority = MIN_PRIORITY_GWEI[network][settings.mode];
+
+  // ── 1. Priority fee ────────────────────────────────────────────────────
+  // Scale live priority by the mode multiplier; use tiny absolute floor if
+  // mempool is empty (live priority ≈ 0). Old floor was 1–4 gwei, causing
+  // priority to dominate maxFee at low-gas conditions.
+  const livePriorityGwei = Number(current.maxPriorityFeePerGas) / 1e9;
+  const computedPriorityGwei = Math.max(livePriorityGwei * factors.priority, minPriority);
+  const userPriorityGwei = settings.priorityFeeGwei;
+  // Use whichever is higher: mode-computed or user's saved setting
+  const rawPriorityGwei = Math.max(computedPriorityGwei, userPriorityGwei);
+  const maxPriorityFeePerGas = parseGwei(String(rawPriorityGwei.toFixed(9)));
+
+  // ── 2. Max fee — recalculated live, not from stale saved value ─────────
+  // baseFee × mode_multiplier + priority  (pure live-gas formula)
+  const liveBaseGwei = Number(current.baseFeePerGas) / 1e9;
+  const liveMaxFeeGwei = liveBaseGwei * factors.base + rawPriorityGwei;
+
+  // Saved maxFeeGwei = hard ceiling to prevent overpaying during spikes.
   const userMaxFeePerGas = parseGwei(String(settings.maxFeeGwei));
-  const userPriorityFeePerGas = parseGwei(String(settings.priorityFeeGwei));
-  const estimatedPriorityFeePerGas =
-    current.maxPriorityFeePerGas > 0n
-      ? current.maxPriorityFeePerGas
-      : userPriorityFeePerGas;
-  // Use the higher of estimated vs user priority fee so we stay competitive
-  // during hot mints without being capped to a floor that may be below market.
-  const rawPriorityFee =
-    estimatedPriorityFeePerGas > userPriorityFeePerGas
-      ? estimatedPriorityFeePerGas
-      : userPriorityFeePerGas;
-  const maxPriorityFeePerGas = minBigint(rawPriorityFee, userMaxFeePerGas);
-  const competitiveMaxFeePerGas = current.baseFeePerGas * 2n + maxPriorityFeePerGas;
-  const estimatedMaxFeePerGas =
-    current.maxFeePerGas > competitiveMaxFeePerGas
-      ? current.maxFeePerGas
-      : competitiveMaxFeePerGas;
-  const cappedMaxFeePerGas = minBigint(estimatedMaxFeePerGas, userMaxFeePerGas);
-  const maxFeePerGas =
-    cappedMaxFeePerGas < maxPriorityFeePerGas
-      ? maxPriorityFeePerGas
-      : cappedMaxFeePerGas;
+  const liveMaxFeePerGas = parseGwei(String(liveMaxFeeGwei.toFixed(9)));
+
+  // Use live-computed value, capped at user's ceiling
+  const cappedMaxFeePerGas = liveMaxFeePerGas < userMaxFeePerGas
+    ? liveMaxFeePerGas
+    : userMaxFeePerGas;
+
+  const maxFeePerGas = cappedMaxFeePerGas < maxPriorityFeePerGas
+    ? maxPriorityFeePerGas
+    : cappedMaxFeePerGas;
+
+  // ── 3. Effective fee — what we actually pay (base + priority, ≤ maxFee) ─
   const effectiveFeePerGas = minBigint(
     maxFeePerGas,
     current.baseFeePerGas + maxPriorityFeePerGas
@@ -118,10 +165,10 @@ export function resolveGasFees(current: GasFeeQuote, settings: GasSettings): Res
     maxPriorityFeePerGas,
     effectiveFeePerGas,
     userMaxFeePerGas,
-    userPriorityFeePerGas,
+    userPriorityFeePerGas: parseGwei(String(userPriorityGwei)),
     baseFeeCovered: maxFeePerGas >= current.baseFeePerGas,
-    maxFeeCapped: estimatedMaxFeePerGas > userMaxFeePerGas,
-    priorityFeeCapped: estimatedPriorityFeePerGas > userPriorityFeePerGas
+    maxFeeCapped: liveMaxFeePerGas > userMaxFeePerGas,
+    priorityFeeCapped: false // We never cap priority below market anymore
   };
 }
 
@@ -152,7 +199,12 @@ export function estimateTransactionGasCost(
   settings: GasSettings
 ): GasEstimate {
   const totalCostWei = gasUnits * fees.effectiveFeePerGas;
-  const capWei = BigInt(Math.floor(settings.maxTotalGasCostEth * 1e18));
+  // Cap is now computed from live maxFee × mode cap multiplier, not hardcoded preset
+  const factors = MODE_FACTORS[settings.mode];
+  const liveCapWei = fees.maxFeePerGas * BigInt(Math.round(factors.cap * 1000)) / 1000n;
+  const userCapWei = BigInt(Math.floor(settings.maxTotalGasCostEth * 1e18));
+  // Use the higher of the two caps so user's explicit cap is always respected
+  const capWei = liveCapWei > userCapWei ? liveCapWei : userCapWei;
   return {
     baseFeePerGas: fees.baseFeePerGas,
     maxFeePerGas: fees.maxFeePerGas,

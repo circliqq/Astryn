@@ -27,6 +27,7 @@ import { SecurityAuditModule } from "./domains/security-audit.module.js";
 import { SimulationModule } from "./domains/simulation.module.js";
 import { SniperModule } from "./domains/sniper.module.js";
 import { SwapModule } from "./domains/swap.module.js";
+import { SupportModule } from "./domains/support.module.js";
 import { SweepAlertModule } from "./domains/sweep-alert.module.js";
 import { TransactionsModule } from "./domains/transactions.module.js";
 import { UsersModule } from "./domains/users.module.js";
@@ -70,6 +71,7 @@ import { EventsModule } from "./events/events.module.js";
     SwapModule,
     SweepAlertModule,
     MintAlertsModule,
+    SupportModule,
   ]
 })
 export class AppModule {}

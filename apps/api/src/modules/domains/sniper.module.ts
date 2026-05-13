@@ -14,6 +14,7 @@ import {
 import { IsIn, IsNumber, IsOptional, IsString, Min } from "class-validator";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
+import { EliteOnly, PlanGuard } from "../auth/plan.guard.js";
 import { EventsGateway } from "../events/events.gateway.js";
 import { EventsModule } from "../events/events.module.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -51,7 +52,8 @@ class CreateSniperTaskDto {
 }
 
 @Controller("sniper")
-@UseGuards(AuthGuard)
+@UseGuards(AuthGuard, PlanGuard)
+@EliteOnly()
 class SniperController {
   constructor(
     private readonly prisma: PrismaService,
