@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download } from "lucide-react";
+import { Download, TrendingUp, TrendingDown, Minus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusPill } from "@/components/status-pill";
 import { Button, Panel } from "@/components/ui";
@@ -53,6 +53,151 @@ interface Wallet {
   id: string;
   address: string;
   name: string;
+}
+
+interface PnlData {
+  investedEth: string;
+  investedUsd: string;
+  currentValueEth: string;
+  currentValueUsd: string;
+  pnlEth: string;
+  pnlUsd: string;
+  pnlPercent: number;
+  floorPriceEth: string;
+  mintPriceEth: string;
+  gasEth: string;
+  ethUsdPrice: number;
+  mintQuantity: number;
+  successfulMints: number;
+  floorUnavailable: boolean;
+}
+
+function PnlCard({ taskId }: { taskId: string }) {
+  const { data, isLoading, refetch, isRefetching } = useQuery<PnlData>({
+    queryKey: ["pnl", taskId],
+    queryFn: () => apiFetch<PnlData>(`/reports/${taskId}/pnl`),
+    staleTime: 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <Panel className="p-5">
+        <div className="flex items-center gap-2 text-[13px] text-graphite-400">
+          <RefreshCw size={14} className="animate-spin" />
+          Loading PnL…
+        </div>
+      </Panel>
+    );
+  }
+  if (!data) return null;
+
+  const pnl = data.pnlPercent;
+  const isProfit = pnl > 0;
+  const isLoss = pnl < 0;
+
+  const tone = isProfit
+    ? { bg: "bg-status-green-bg", text: "text-status-green-text", border: "border-status-green-border" }
+    : isLoss
+    ? { bg: "bg-status-red-bg", text: "text-status-red-text", border: "border-status-red-border" }
+    : { bg: "bg-graphite-800", text: "text-graphite-300", border: "border-graphite-700" };
+
+  const Icon = isProfit ? TrendingUp : isLoss ? TrendingDown : Minus;
+  const sign = isProfit ? "+" : "";
+
+  return (
+    <Panel className="overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-graphite-700 px-5 py-3.5">
+        <div className="flex items-center gap-2">
+          <Icon size={15} className={tone.text} />
+          <p className="text-[13px] font-semibold text-graphite-100">PnL Summary</p>
+          {data.floorUnavailable && (
+            <span className="rounded bg-status-yellow-bg px-1.5 py-0.5 text-[10px] font-medium text-status-yellow-text">
+              Floor unavailable
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => refetch()}
+          disabled={isRefetching}
+          className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px] text-graphite-400 hover:bg-graphite-800 hover:text-graphite-100 disabled:opacity-50 transition-colors"
+        >
+          <RefreshCw size={11} className={isRefetching ? "animate-spin" : ""} />
+          Refresh
+        </button>
+      </div>
+
+      {/* Main 3-column PnL */}
+      <div className="grid grid-cols-3 divide-x divide-graphite-700 border-b border-graphite-700">
+        {/* Invested */}
+        <div className="p-5">
+          <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-graphite-500">Invested</p>
+          <p className="mt-2 font-mono text-[22px] font-semibold tabular-nums leading-none text-graphite-100">
+            {data.investedEth} ETH
+          </p>
+          <p className="mt-1 font-mono text-[13px] tabular-nums text-graphite-400">
+            ${data.investedUsd}
+          </p>
+        </div>
+
+        {/* Current Value */}
+        <div className="p-5">
+          <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-graphite-500">
+            Current Value {data.floorUnavailable ? "(floor N/A)" : ""}
+          </p>
+          <p className={`mt-2 font-mono text-[22px] font-semibold tabular-nums leading-none ${data.floorUnavailable ? "text-graphite-500" : "text-graphite-100"}`}>
+            {data.floorUnavailable ? "—" : `${data.currentValueEth} ETH`}
+          </p>
+          <p className="mt-1 font-mono text-[13px] tabular-nums text-graphite-400">
+            {data.floorUnavailable ? "—" : `$${data.currentValueUsd}`}
+          </p>
+        </div>
+
+        {/* PnL */}
+        <div className={`p-5 ${tone.bg}`}>
+          <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-graphite-500">
+            Profit / Loss
+          </p>
+          <p className={`mt-2 font-mono text-[22px] font-semibold tabular-nums leading-none ${tone.text}`}>
+            {data.floorUnavailable ? "—" : `${sign}${data.pnlEth} ETH`}
+          </p>
+          <div className="mt-1 flex items-center gap-2">
+            <span className={`font-mono text-[13px] tabular-nums ${tone.text}`}>
+              {data.floorUnavailable ? "—" : `${sign}$${data.pnlUsd}`}
+            </span>
+            {!data.floorUnavailable && (
+              <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${tone.bg} ${tone.text} border ${tone.border}`}>
+                {sign}{pnl.toFixed(1)}%
+              </span>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Footer stats */}
+      <div className="flex flex-wrap gap-x-6 gap-y-1.5 px-5 py-3">
+        <span className="text-[12px] text-graphite-500">
+          Mint price <span className="font-mono text-graphite-300">{data.mintPriceEth} ETH</span>
+        </span>
+        <span className="text-[12px] text-graphite-500">
+          Gas <span className="font-mono text-graphite-300">{data.gasEth} ETH</span>
+        </span>
+        <span className="text-[12px] text-graphite-500">
+          Floor <span className="font-mono text-graphite-300">
+            {data.floorUnavailable ? "N/A" : `${data.floorPriceEth} ETH`}
+          </span>
+        </span>
+        <span className="text-[12px] text-graphite-500">
+          Wallets <span className="font-mono text-graphite-300">{data.successfulMints} minted × {data.mintQuantity} qty</span>
+        </span>
+        {data.ethUsdPrice > 0 && (
+          <span className="text-[12px] text-graphite-500">
+            ETH/USD <span className="font-mono text-graphite-300">${data.ethUsdPrice.toLocaleString()}</span>
+          </span>
+        )}
+      </div>
+    </Panel>
+  );
 }
 
 const TX_STATUS: Record<string, string> = {
@@ -190,6 +335,8 @@ export default function ReportsPage() {
                 </Panel>
               ))}
             </div>
+
+            <PnlCard taskId={task.id} />
 
             {walletRows.length > 0 ? (
               <Panel>
