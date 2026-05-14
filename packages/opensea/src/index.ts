@@ -313,7 +313,7 @@ export class OpenSeaClient {
         const mintData = await this.request<Record<string, unknown>>(`/drops/${slug}/mint`, {
           method: "POST",
           body: JSON.stringify({
-            minter: walletAddress,
+            wallet_address: walletAddress,
             quantity: 1,
           }),
         });
@@ -483,8 +483,9 @@ export class OpenSeaClient {
     const data = await this.request<Record<string, unknown>>(`/drops/${slug}/mint`, {
       method: "POST",
       body: JSON.stringify({
-        minter: walletAddress,
+        wallet_address: walletAddress,
         quantity,
+        ...(phaseType ? { phase_type: phaseType } : {}),
       })
     });
     const payload = mintPayloadFrom(data);
