@@ -8,6 +8,7 @@ import {
   Clock,
   ListTodo,
   Loader2,
+  Minus,
   Pause,
   Pencil,
   Play,
@@ -15,6 +16,8 @@ import {
   RefreshCw,
   Repeat2,
   Save,
+  TrendingDown,
+  TrendingUp,
   X,
   XCircle,
 } from "lucide-react";
@@ -147,6 +150,97 @@ function initEditDraft(task: MintTask): EditDraft {
       ? new Date(task.scheduledAt).toISOString().slice(0, 16)
       : "",
   };
+}
+
+// ── TaskPnlStrip ──────────────────────────────────────────────────────────────
+
+interface PnlData {
+  investedEth: string; investedUsd: string;
+  currentValueEth: string; currentValueUsd: string;
+  pnlEth: string; pnlUsd: string; pnlPercent: number;
+  floorPriceEth: string; mintPriceEth: string; gasEth: string;
+  ethUsdPrice: number; mintQuantity: number; successfulMints: number;
+  floorUnavailable: boolean;
+}
+
+function TaskPnlStrip({ taskId }: { taskId: string }) {
+  const { data, isLoading, refetch, isRefetching } = useQuery<PnlData>({
+    queryKey: ["pnl", taskId],
+    queryFn: () => apiFetch<PnlData>(`/reports/${taskId}/pnl`),
+    staleTime: 60_000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="mt-4 flex items-center gap-2 border-t border-graphite-700 pt-4 text-[12px] text-graphite-500">
+        <RefreshCw size={12} className="animate-spin" /> Loading PnL…
+      </div>
+    );
+  }
+  if (!data) return null;
+
+  const pnl = data.pnlPercent;
+  const isProfit = pnl > 0;
+  const isLoss = pnl < 0;
+  const sign = isProfit ? "+" : "";
+  const colorClass = isProfit ? "text-status-green-text" : isLoss ? "text-status-red-text" : "text-graphite-400";
+  const bgClass = isProfit ? "bg-status-green-bg" : isLoss ? "bg-status-red-bg" : "bg-graphite-800";
+
+  return (
+    <div className="mt-4 border-t border-graphite-700 pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {isProfit ? <TrendingUp size={14} className="text-status-green-text" />
+            : isLoss ? <TrendingDown size={14} className="text-status-red-text" />
+            : <Minus size={14} className="text-graphite-400" />}
+          <span className="text-[12px] font-semibold text-graphite-300">PnL</span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4">
+          <div>
+            <span className="text-[11px] text-graphite-500">Invested </span>
+            <span className="font-mono text-[12px] text-graphite-200">{data.investedEth} ETH</span>
+            {data.ethUsdPrice > 0 && <span className="ml-1 font-mono text-[11px] text-graphite-500">(${data.investedUsd})</span>}
+          </div>
+
+          <div>
+            <span className="text-[11px] text-graphite-500">Current </span>
+            <span className="font-mono text-[12px] text-graphite-200">
+              {data.floorUnavailable ? "floor N/A" : `${data.currentValueEth} ETH`}
+            </span>
+            {!data.floorUnavailable && data.ethUsdPrice > 0 && (
+              <span className="ml-1 font-mono text-[11px] text-graphite-500">(${data.currentValueUsd})</span>
+            )}
+          </div>
+
+          {!data.floorUnavailable && (
+            <div className={`flex items-center gap-1.5 rounded-md px-2.5 py-1 ${bgClass}`}>
+              <span className={`font-mono text-[13px] font-semibold ${colorClass}`}>
+                {sign}{data.pnlEth} ETH
+              </span>
+              {data.ethUsdPrice > 0 && (
+                <span className={`font-mono text-[11px] ${colorClass} opacity-80`}>
+                  ({sign}${data.pnlUsd})
+                </span>
+              )}
+              <span className={`text-[11px] font-semibold ${colorClass}`}>
+                {sign}{pnl.toFixed(1)}%
+              </span>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => refetch()}
+          disabled={isRefetching}
+          className="flex items-center gap-1 text-[11px] text-graphite-500 hover:text-graphite-300 disabled:opacity-50 transition-colors"
+        >
+          <RefreshCw size={10} className={isRefetching ? "animate-spin" : ""} />
+          Refresh
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ── TaskRow ───────────────────────────────────────────────────────────────────
@@ -409,6 +503,9 @@ function TaskRow({ task, onRefresh }: { task: MintTask; onRefresh: () => void })
           </div>
         </div>
       )}
+
+      {/* ── PnL summary (completed tasks only) ── */}
+      {task.status === "COMPLETED" && <TaskPnlStrip taskId={task.id} />}
     </Panel>
   );
 }
