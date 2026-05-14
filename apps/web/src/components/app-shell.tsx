@@ -54,7 +54,11 @@ function LiveClock() {
   }, []);
 
   if (!time) return null;
-  return <span className="hidden items-center font-mono text-[11px] text-graphite-400 md:flex">{time}</span>;
+  return (
+    <span className="hidden items-center gap-1.5 rounded-md border border-graphite-700 bg-graphite-800 px-2.5 py-1 font-mono text-[12px] font-medium text-graphite-100 md:flex">
+      {time}
+    </span>
+  );
 }
 
 // ── Live status bar ───────────────────────────────────────────────────────
