@@ -421,8 +421,8 @@ export class OpenSeaClient {
     }
 
     // All approaches exhausted — truly unverifiable.
-        throw new Error("404: OpenSea eligibility could not be verified for this phase. Check manually on opensea.io.");
-      }
+    if (!data) {
+      throw new Error("404: OpenSea eligibility could not be verified for this phase. Check manually on opensea.io.");
     }
 
     const payload = mintPayloadFrom(data);
