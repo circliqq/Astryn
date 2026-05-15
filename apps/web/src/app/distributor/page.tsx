@@ -148,7 +148,7 @@ export default function DistributorPage() {
             </label>
             <label>
               <span className="mb-1 block text-[11px] font-medium text-graphite-400">Amount per recipient</span>
-              <Input type="number" min="0" step="0.001" value={amountEach} onChange={(event) => { setAmountEach(event.target.value); setPreview(null); }} />
+              <Input type="number" min="0" step="any" value={amountEach} onChange={(event) => { setAmountEach(event.target.value); setPreview(null); }} />
             </label>
             <div className="grid grid-cols-2 gap-3">
               <div className="metric-card">

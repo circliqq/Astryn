@@ -263,7 +263,7 @@ export default function SniperPage() {
                 </label>
                 <label>
                   <span className="mb-1 block text-[11px] font-medium text-graphite-400">Max price ETH</span>
-                  <Input type="number" min="0" step="0.001" value={form.maxPriceEth} onChange={(event) => setField("maxPriceEth", event.target.value)} />
+                  <Input type="number" min="0" step="any" value={form.maxPriceEth} onChange={(event) => setField("maxPriceEth", event.target.value)} />
                 </label>
                 <label>
                   <span className="mb-1 block text-[11px] font-medium text-graphite-400">Collection slug</span>

@@ -640,7 +640,7 @@ function MintSetupContent() {
                             <Input
                               type="number"
                               min="1"
-                              step="0.1"
+                              step="any"
                               value={advancedGas.maxFeeGwei}
                               onChange={(e) =>
                                 setAdvancedGas((g) => ({ ...g, maxFeeGwei: Number(e.target.value) }))
@@ -654,7 +654,7 @@ function MintSetupContent() {
                             <Input
                               type="number"
                               min="0"
-                              step="0.1"
+                              step="any"
                               value={advancedGas.priorityFeeGwei}
                               onChange={(e) =>
                                 setAdvancedGas((g) => ({ ...g, priorityFeeGwei: Number(e.target.value) }))
@@ -668,7 +668,7 @@ function MintSetupContent() {
                             <Input
                               type="number"
                               min="0"
-                              step="0.0001"
+                              step="any"
                               value={advancedGas.maxTotalGasCostEth}
                               onChange={(e) =>
                                 setAdvancedGas((g) => ({
@@ -864,7 +864,7 @@ function MintSetupContent() {
                         Floor Multiplier <span className="text-graphite-500">(e.g. 0.98 = 98% of floor)</span>
                       </span>
                       <Input
-                        type="number" min="0.1" max="5" step="0.01"
+                        type="number" min="0.1" max="5" step="any"
                         value={flipperMultiplier}
                         onChange={(e) => setFlipperMultiplier(e.target.value)}
                         placeholder="0.98"
@@ -874,7 +874,7 @@ function MintSetupContent() {
                     <label>
                       <span className="mb-1 block text-[11px] font-medium text-graphite-400">Fixed Price (ETH)</span>
                       <Input
-                        type="number" min="0.0001" step="0.001"
+                        type="number" min="0.0001" step="any"
                         value={flipperFixedPrice}
                         onChange={(e) => setFlipperFixedPrice(e.target.value)}
                         placeholder="e.g. 0.05"
@@ -888,7 +888,7 @@ function MintSetupContent() {
                         Min Price (ETH) <span className="text-graphite-500">(optional)</span>
                       </span>
                       <Input
-                        type="number" min="0" step="0.001"
+                        type="number" min="0" step="any"
                         value={flipperMinPrice}
                         onChange={(e) => setFlipperMinPrice(e.target.value)}
                         placeholder="e.g. 0.01"

@@ -81,7 +81,7 @@ export default function FundingPage() {
             <Input
               className="w-40"
               type="number"
-              step="0.001"
+              step="any"
               min="0"
               value={requiredEth}
               onChange={(e) => setRequiredEth(e.target.value)}

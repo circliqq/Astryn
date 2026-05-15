@@ -124,7 +124,7 @@ export default function GasSettingsPage() {
                 </label>
                 <label>
                   <span className="mb-1 block text-[11px] font-medium text-graphite-400">Gas cap per wallet (ETH)</span>
-                  <Input type="number" min="0" step="0.001" value={settings.maxTotalGasCostEth} onChange={(event) => updateNumber("maxTotalGasCostEth", event.target.value)} />
+                  <Input type="number" min="0" step="any" value={settings.maxTotalGasCostEth} onChange={(event) => updateNumber("maxTotalGasCostEth", event.target.value)} />
                 </label>
                 <label>
                   <span className="mb-1 block text-[11px] font-medium text-graphite-400">Max bump attempts</span>
