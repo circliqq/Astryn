@@ -23,6 +23,8 @@ interface SniperTask {
   contractAddress: string | null;
   network: "BASE" | "ETHEREUM";
   maxPriceWei: string;
+  minPriceWei: string | null;
+  quantity: number;
   floorThreshold: number | null;
   minRarityScore: number | null;
   status: string;
@@ -62,6 +64,8 @@ export default function SniperPage() {
     contractAddress: "",
     network: "BASE" as "BASE" | "ETHEREUM",
     maxPriceEth: "0.05",
+    minPriceEth: "",
+    quantity: "1",
     floorThreshold: "0.7",
     minRarityScore: "80",
   });
@@ -90,6 +94,8 @@ export default function SniperPage() {
           contractAddress: form.contractAddress.trim() || undefined,
           network: form.network,
           maxPriceWei: ethToWei(form.maxPriceEth),
+          minPriceWei: form.type === "RARITY" && form.minPriceEth.trim() ? ethToWei(form.minPriceEth) : undefined,
+          quantity: Number(form.quantity) || 1,
           floorThreshold: form.type === "FAT_FINGER" ? Number(form.floorThreshold) : undefined,
           minRarityScore: form.type === "RARITY" ? Number(form.minRarityScore) : undefined,
         }),
@@ -174,7 +180,8 @@ export default function SniperPage() {
                     <th>Wallet</th>
                     <th>Network</th>
                     <th>Trigger</th>
-                    <th>Max Price</th>
+                    <th>Price Range</th>
+                    <th>Qty</th>
                     <th>Status</th>
                     <th>Actions</th>
                   </tr>
@@ -196,7 +203,14 @@ export default function SniperPage() {
                             ? `${Math.round((task.floorThreshold ?? 0.7) * 100)}% of floor`
                             : `Score ${task.minRarityScore ?? 0}+`}
                         </td>
-                        <td className="font-mono text-[12px]">{formatWei(task.maxPriceWei)}</td>
+                        <td className="font-mono text-[12px]">
+                          {task.minPriceWei ? (
+                            <span>{formatWei(task.minPriceWei)} – {formatWei(task.maxPriceWei)}</span>
+                          ) : (
+                            <span>≤ {formatWei(task.maxPriceWei)}</span>
+                          )}
+                        </td>
+                        <td className="text-center">{task.quantity ?? 1}</td>
                         <td><Badge tone={STATUS_TONE[task.status] ?? "slate"}>{task.status.replace(/_/g, " ")}</Badge></td>
                         <td>
                           <div className="flex items-center gap-1">
@@ -262,8 +276,8 @@ export default function SniperPage() {
                   </Select>
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Max price ETH</span>
-                  <Input type="number" min="0" step="any" value={form.maxPriceEth} onChange={(event) => setField("maxPriceEth", event.target.value)} />
+                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Quantity (NFTs)</span>
+                  <Input type="number" min="1" step="1" value={form.quantity} onChange={(event) => setField("quantity", event.target.value)} />
                 </label>
                 <label>
                   <span className="mb-1 block text-[11px] font-medium text-graphite-400">Collection slug</span>
@@ -274,15 +288,31 @@ export default function SniperPage() {
                   <Input value={form.contractAddress} onChange={(event) => setField("contractAddress", event.target.value)} placeholder="0x..." />
                 </label>
                 {form.type === "FAT_FINGER" ? (
-                  <label>
-                    <span className="mb-1 block text-[11px] font-medium text-graphite-400">Floor threshold</span>
-                    <Input type="number" min="0" max="1" step="any" value={form.floorThreshold} onChange={(event) => setField("floorThreshold", event.target.value)} />
-                  </label>
+                  <>
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Max price ETH</span>
+                      <Input type="number" min="0" step="any" value={form.maxPriceEth} onChange={(event) => setField("maxPriceEth", event.target.value)} />
+                    </label>
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Floor threshold</span>
+                      <Input type="number" min="0" max="1" step="any" value={form.floorThreshold} onChange={(event) => setField("floorThreshold", event.target.value)} />
+                    </label>
+                  </>
                 ) : (
-                  <label>
-                    <span className="mb-1 block text-[11px] font-medium text-graphite-400">Minimum rarity score</span>
-                    <Input type="number" min="0" step="1" value={form.minRarityScore} onChange={(event) => setField("minRarityScore", event.target.value)} />
-                  </label>
+                  <>
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Min price ETH</span>
+                      <Input type="number" min="0" step="any" value={form.minPriceEth} onChange={(event) => setField("minPriceEth", event.target.value)} placeholder="0.00 (optional)" />
+                    </label>
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Max price ETH</span>
+                      <Input type="number" min="0" step="any" value={form.maxPriceEth} onChange={(event) => setField("maxPriceEth", event.target.value)} />
+                    </label>
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Minimum rarity score</span>
+                      <Input type="number" min="0" step="1" value={form.minRarityScore} onChange={(event) => setField("minRarityScore", event.target.value)} />
+                    </label>
+                  </>
                 )}
                 {error && <p className="md:col-span-2 rounded-md border border-status-red-border bg-status-red-bg px-3 py-2 text-[12px] text-status-red-text">{error}</p>}
                 <div className="flex justify-end gap-2 md:col-span-2">

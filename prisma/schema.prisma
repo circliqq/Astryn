@@ -481,6 +481,8 @@ model SniperTask {
   contractAddress String?
   network         Network
   maxPriceWei     String
+  minPriceWei     String?
+  quantity        Int              @default(1)
   floorThreshold  Float?
   minRarityScore  Float?
   gasSettingsJson Json?

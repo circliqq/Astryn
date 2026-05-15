@@ -41,6 +41,15 @@ class CreateSniperTaskDto {
   maxPriceWei!: string;
 
   @IsOptional()
+  @IsString()
+  minPriceWei?: string;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  quantity?: number;
+
+  @IsOptional()
   @IsNumber()
   @Min(0)
   floorThreshold?: number;
@@ -81,6 +90,8 @@ class SniperController {
         contractAddress: body.contractAddress,
         network: body.network,
         maxPriceWei: body.maxPriceWei,
+        minPriceWei: body.minPriceWei,
+        quantity: body.quantity ?? 1,
         floorThreshold: body.floorThreshold,
         minRarityScore: body.minRarityScore,
         status: "WATCHING",
