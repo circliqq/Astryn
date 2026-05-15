@@ -50,33 +50,36 @@ export class RpcPool {
       .sort((a, b) => a.priority - b.priority);
   }
 
-  async checkEndpoint(endpoint: RpcEndpointConfig): Promise<RpcHealth> {
+  async checkEndpoint(endpoint: RpcEndpointConfig, timeoutMs = 1_500): Promise<RpcHealth> {
     const started = Date.now();
+    const offline: RpcHealth = { endpointId: endpoint.id, status: "offline", latencyMs: null, checkedAt: new Date() };
     try {
-      const blockNumber = await createMintPublicClient({
-        chainName: endpoint.chainName,
-        rpcUrl: endpoint.url
-      }).getBlockNumber();
+      const blockNumber = await Promise.race([
+        createMintPublicClient({ chainName: endpoint.chainName, rpcUrl: endpoint.url }).getBlockNumber(),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs)),
+      ]);
       const latencyMs = Date.now() - started;
       const status = latencyMs > 1_500 ? "degraded" : "healthy";
       const result = { endpointId: endpoint.id, status, latencyMs, blockNumber, checkedAt: new Date() } as const;
       this.health.set(endpoint.id, result);
       return result;
     } catch {
-      const result = {
-        endpointId: endpoint.id,
-        status: "offline",
-        latencyMs: null,
-        checkedAt: new Date()
-      } as const;
-      this.health.set(endpoint.id, result);
-      return result;
+      this.health.set(endpoint.id, offline);
+      return offline;
     }
   }
 
   async checkAll(chainName?: ChainName): Promise<RpcHealth[]> {
     const endpoints = chainName ? this.endpointsFor(chainName) : this.endpoints;
     return Promise.all(endpoints.map((endpoint) => this.checkEndpoint(endpoint)));
+  }
+
+  // Fast check: only ping the primary (first) endpoint. Used for immediate tasks
+  // where every ms counts and backup RPC latency measurement is not worth the wait.
+  async checkPrimary(chainName: ChainName): Promise<RpcHealth[]> {
+    const primary = this.endpointsFor(chainName)[0];
+    if (!primary) return [];
+    return [await this.checkEndpoint(primary)];
   }
 
   selectPrimary(chainName: ChainName): RpcEndpointConfig {

@@ -212,8 +212,21 @@ export async function executeMintTask(
       Math.floor(numberEnv("MINT_RECEIPT_TIMEOUT_MS", 120_000)),
     );
 
+    // ── RPC health + market signals ───────────────────────────────────────
+    // For immediate tasks (phase already open / ≤5s away): only ping the primary
+    // RPC — skip backup latency checks to save 2-3s. Market stats (OpenSea) are
+    // also skipped for immediate tasks; every ms counts at T=0.
+    // For scheduled tasks: full checkAll + parallel market stats fetch.
+    const isImmediate = preArmMs <= 5_000;
     await log(prisma, task.id, "info", `Checking ${network} RPC health.`);
-    await pool.checkAll(network);
+
+    // Start market stats in parallel immediately (doesn't need RPC URL).
+    const offerRatioThreshold = numberEnv("MINT_OFFER_RATIO_THRESHOLD", 1.5);
+    const marketStatsPromise = isImmediate
+      ? Promise.resolve(null)
+      : openSea.getCollectionStats(task.collection.slug).catch(() => null);
+
+    await (isImmediate ? pool.checkPrimary(network) : pool.checkAll(network));
     const primary = pool.selectPrimary(network);
     const client = createMintPublicClient({
       chainName: network,
@@ -225,10 +238,12 @@ export async function executeMintTask(
       "info",
       `Selected ${primary.name} RPC for preflight, signing, and receipts.`,
     );
-    const currentGas = await fetchCurrentGas({
-      chainName: network,
-      rpcUrl: primary.url,
-    });
+
+    // Fetch gas + await market stats in parallel.
+    const [currentGas, marketStats] = await Promise.all([
+      fetchCurrentGas({ chainName: network, rpcUrl: primary.url }),
+      marketStatsPromise,
+    ]);
     await log(prisma, task.id, "info", "Loaded current network gas fees.", {
       baseFeePerGas: currentGas.baseFeePerGas.toString(),
       maxPriorityFeePerGas: currentGas.maxPriorityFeePerGas.toString(),
@@ -259,39 +274,35 @@ export async function executeMintTask(
     // ─────────────────────────────────────────────────────────────────────
 
     // ── Floor/Offer Ratio Gas Strategy ───────────────────────────────────
-    // If top collection offer ≥ MINT_OFFER_RATIO_THRESHOLD × floor price,
-    // demand is high — override gas mode to "aggressive" regardless of task settings.
-    // Default threshold: 1.5× (offer ≥ 150% of floor = clearly profitable flip).
-    const offerRatioThreshold = numberEnv("MINT_OFFER_RATIO_THRESHOLD", 1.5);
+    // Skipped for immediate tasks — OpenSea latency is not worth it at T=0.
     let offerRatioGasOverride: { maxFeeGwei: number } | null = null;
-    try {
-      const marketStats = await openSea.getCollectionStats(task.collection.slug);
-      const floor = marketStats.floorPriceEth ? Number(marketStats.floorPriceEth) : null;
-      const bestOffer = marketStats.bestOfferEth ? Number(marketStats.bestOfferEth) : null;
-      if (floor && floor > 0 && bestOffer && bestOffer > 0) {
-        const ratio = bestOffer / floor;
-        if (ratio >= offerRatioThreshold) {
-          // Boost gas proportionally: at 1.5× ratio we add 20%, at 2× we add 40%, capped at 2×.
-          const gasMultiplier = Math.min(2, 1 + (ratio - 1) * 0.4);
-          const baseMaxFeeGwei = Number(currentGas.maxFeePerGas / 1_000_000_000n);
-          offerRatioGasOverride = { maxFeeGwei: Math.ceil(baseMaxFeeGwei * gasMultiplier) };
-          await log(prisma, task.id, "warn",
-            `High demand detected: offer/floor ratio ${ratio.toFixed(2)}× (floor ${floor.toFixed(4)} ETH, best offer ${bestOffer.toFixed(4)} ETH). Boosting gas by ${Math.round((gasMultiplier - 1) * 100)}%.`,
-            { ratio, floor, bestOffer, offerRatioGasOverride, gasMultiplier },
-          );
-        } else {
-          await log(prisma, task.id, "info",
-            `Offer/floor ratio ${ratio.toFixed(2)}× — below threshold (${offerRatioThreshold}×). Gas unchanged.`,
-            { ratio, floor, bestOffer },
-          );
+    if (marketStats) {
+      try {
+        const floor = marketStats.floorPriceEth ? Number(marketStats.floorPriceEth) : null;
+        const bestOffer = marketStats.bestOfferEth ? Number(marketStats.bestOfferEth) : null;
+        if (floor && floor > 0 && bestOffer && bestOffer > 0) {
+          const ratio = bestOffer / floor;
+          if (ratio >= offerRatioThreshold) {
+            const gasMultiplier = Math.min(2, 1 + (ratio - 1) * 0.4);
+            const baseMaxFeeGwei = Number(currentGas.maxFeePerGas / 1_000_000_000n);
+            offerRatioGasOverride = { maxFeeGwei: Math.ceil(baseMaxFeeGwei * gasMultiplier) };
+            await log(prisma, task.id, "warn",
+              `High demand detected: offer/floor ratio ${ratio.toFixed(2)}× (floor ${floor.toFixed(4)} ETH, best offer ${bestOffer.toFixed(4)} ETH). Boosting gas by ${Math.round((gasMultiplier - 1) * 100)}%.`,
+              { ratio, floor, bestOffer, offerRatioGasOverride, gasMultiplier },
+            );
+          } else {
+            await log(prisma, task.id, "info",
+              `Offer/floor ratio ${ratio.toFixed(2)}× — below threshold (${offerRatioThreshold}×). Gas unchanged.`,
+              { ratio, floor, bestOffer },
+            );
+          }
         }
+      } catch (err) {
+        await log(prisma, task.id, "warn",
+          "Could not process collection market stats for offer/floor ratio check.",
+          { rawError: rawErrorMessage(err) },
+        ).catch(() => undefined);
       }
-    } catch (err) {
-      // non-fatal — best-effort market signal
-      await log(prisma, task.id, "warn",
-        "Could not fetch collection market stats for offer/floor ratio check.",
-        { rawError: rawErrorMessage(err) },
-      ).catch(() => undefined);
     }
     // ─────────────────────────────────────────────────────────────────────
 
