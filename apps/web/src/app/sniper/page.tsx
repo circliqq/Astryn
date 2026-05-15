@@ -276,7 +276,7 @@ export default function SniperPage() {
                 {form.type === "FAT_FINGER" ? (
                   <label>
                     <span className="mb-1 block text-[11px] font-medium text-graphite-400">Floor threshold</span>
-                    <Input type="number" min="0" max="1" step="0.05" value={form.floorThreshold} onChange={(event) => setField("floorThreshold", event.target.value)} />
+                    <Input type="number" min="0" max="1" step="any" value={form.floorThreshold} onChange={(event) => setField("floorThreshold", event.target.value)} />
                   </label>
                 ) : (
                   <label>
