@@ -72,15 +72,39 @@ function timeLabel(iso: string | null): string {
   return new Date(iso).toLocaleString();
 }
 
+type FilterTab = "ALL" | "PENDING" | "COMPLETED" | "FAILED" | "CANCELED";
+
+const FILTER_TABS: { key: FilterTab; label: string }[] = [
+  { key: "ALL",       label: "All"       },
+  { key: "PENDING",   label: "Pending"   },
+  { key: "COMPLETED", label: "Completed" },
+  { key: "FAILED",    label: "Failed"    },
+  { key: "CANCELED",  label: "Canceled"  },
+];
+
+const PENDING_STATUSES: TaskStatus[] = ["DRAFT", "SCHEDULED", "RUNNING", "PAUSED"];
+
+function filterTasks(tasks: MintTask[], tab: FilterTab): MintTask[] {
+  if (tab === "ALL")       return tasks;
+  if (tab === "PENDING")   return tasks.filter((t) => PENDING_STATUSES.includes(t.status));
+  if (tab === "COMPLETED") return tasks.filter((t) => t.status === "COMPLETED");
+  if (tab === "FAILED")    return tasks.filter((t) => t.status === "FAILED");
+  if (tab === "CANCELED")  return tasks.filter((t) => t.status === "CANCELED");
+  return tasks;
+}
+
 export default function MintTasksPage() {
   const router = useRouter();
   const qc = useQueryClient();
+  const [activeTab, setActiveTab] = useState<FilterTab>("ALL");
 
   const { data: tasks = [], isLoading } = useQuery<MintTask[]>({
     queryKey: ["mint-tasks"],
     queryFn: () => apiFetch<MintTask[]>("/mint-tasks"),
     refetchInterval: 15_000,
   });
+
+  const visibleTasks = filterTasks(tasks, activeTab);
 
   return (
     <AppShell title="Mint Tasks">
@@ -92,6 +116,36 @@ export default function MintTasksPage() {
           <Button onClick={() => router.push("/scanner")}>
             <Plus size={15} /> New Mint Task
           </Button>
+        </div>
+
+        {/* ── Filter tabs ── */}
+        <div className="flex flex-wrap gap-1 rounded-lg border border-graphite-700 bg-graphite-800/50 p-1">
+          {FILTER_TABS.map(({ key, label }) => {
+            const count = key === "ALL" ? tasks.length : filterTasks(tasks, key).length;
+            const isActive = activeTab === key;
+            return (
+              <button
+                key={key}
+                onClick={() => setActiveTab(key)}
+                className={[
+                  "flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors",
+                  isActive
+                    ? "bg-graphite-700 text-graphite-100 shadow-sm"
+                    : "text-graphite-400 hover:text-graphite-200",
+                ].join(" ")}
+              >
+                {label}
+                <span
+                  className={[
+                    "rounded px-1.5 py-0.5 font-mono text-[10px]",
+                    isActive ? "bg-graphite-600 text-graphite-200" : "bg-graphite-700 text-graphite-500",
+                  ].join(" ")}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
         </div>
 
         {isLoading && (
@@ -117,7 +171,20 @@ export default function MintTasksPage() {
           </Panel>
         )}
 
-        {tasks.map((task) => (
+        {!isLoading && tasks.length > 0 && visibleTasks.length === 0 && (
+          <Panel>
+            <div className="flex flex-col items-center px-6 py-10 text-center">
+              <div className="grid size-[44px] place-items-center rounded-full bg-[#1E2028]">
+                <ListTodo size={20} className="text-graphite-500" />
+              </div>
+              <p className="mt-3 text-[13px] font-medium text-graphite-200">
+                No {FILTER_TABS.find((t) => t.key === activeTab)?.label.toLowerCase()} tasks
+              </p>
+            </div>
+          </Panel>
+        )}
+
+        {visibleTasks.map((task) => (
           <TaskRow
             key={task.id}
             task={task}
