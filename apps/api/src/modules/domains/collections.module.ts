@@ -138,78 +138,84 @@ class CollectionsController {
     const client = new OpenSeaClient({ apiKey: this.config.getOrThrow<string>("OPENSEA_API_KEY") });
     const phaseWindows = resolvePhaseWindows(collection.phases);
 
-    const walletResults = [];
-    for (const wallet of wallets) {
-      const phases = [];
-      for (const window of phaseWindows) {
-        if (window.phaseType === "PUBLIC") {
-          phases.push({
-            phaseType: window.phaseType,
-            startTime: window.startTime,
-            endTime: window.endTime,
-            phaseStatus: window.phaseStatus,
-            eligible: window.phaseStatus !== "ENDED",
-            checked: true,
-            reason:
-              window.phaseStatus === "LIVE"
-                ? "Public phase is live."
-                : window.phaseStatus === "UPCOMING"
-                  ? `Public phase opens at ${window.startTime.toISOString()}.`
-                  : "Public phase has already ended."
-          });
-          continue;
-        }
-
-        try {
-          const result = await client.checkEligibility(
-            collection.slug,
-            wallet.address,
-            toOpenSeaPhase(window.phaseType),
-            { chain: collection.chain.toLowerCase(), contractAddress: collection.contractAddress ?? undefined }
-          );
-          phases.push({
-            phaseType: window.phaseType,
-            startTime: window.startTime,
-            endTime: window.endTime,
-            phaseStatus: window.phaseStatus,
-            eligible: window.phaseStatus !== "ENDED" && result.eligible,
-            checked: true,
-            reason:
-              result.reason ??
-              (result.eligible
-                ? window.phaseStatus === "LIVE"
-                  ? "Wallet is eligible and the phase is live."
-                  : "Wallet is eligible for this phase."
-                : "Wallet is not eligible for this phase.")
-          });
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error);
-          const is404 = msg.includes("404");
-          phases.push({
-            phaseType: window.phaseType,
-            startTime: window.startTime,
-            endTime: window.endTime,
-            phaseStatus: window.phaseStatus,
-            // Never assume eligible when we cannot verify — 404 means the API
-            // endpoint doesn't exist, not that the wallet is whitelisted.
-            eligible: false,
-            checked: false,
-            reason: is404
-              ? "Eligibility could not be verified via OpenSea API — check manually on opensea.io."
-              : msg
-          });
-        }
+    // Run all wallet × phase eligibility checks in parallel to avoid sequential
+    // OpenSea API calls that cause 504 Gateway Timeout under nginx's 60 s limit.
+    async function checkPhaseForWallet(wallet: { id: string; name: string; address: string }, window: ReturnType<typeof resolvePhaseWindows>[number]) {
+      if (window.phaseType === "PUBLIC") {
+        return {
+          phaseType: window.phaseType,
+          startTime: window.startTime,
+          endTime: window.endTime,
+          phaseStatus: window.phaseStatus,
+          eligible: window.phaseStatus !== "ENDED",
+          checked: true,
+          reason:
+            window.phaseStatus === "LIVE"
+              ? "Public phase is live."
+              : window.phaseStatus === "UPCOMING"
+                ? `Public phase opens at ${window.startTime.toISOString()}.`
+                : "Public phase has already ended."
+        };
       }
 
-      walletResults.push({
-        walletId: wallet.id,
-        walletName: wallet.name,
-        walletAddress: wallet.address,
-        eligiblePhaseTypes: phases.filter((phase) => phase.eligible).map((phase) => phase.phaseType),
-        unverifiablePhaseTypes: phases.filter((phase) => !phase.checked).map((phase) => phase.phaseType),
-        phases
-      });
+      try {
+        const result = await client.checkEligibility(
+          collection.slug,
+          wallet.address,
+          toOpenSeaPhase(window.phaseType),
+          { chain: collection.chain.toLowerCase(), contractAddress: collection.contractAddress ?? undefined }
+        );
+        return {
+          phaseType: window.phaseType,
+          startTime: window.startTime,
+          endTime: window.endTime,
+          phaseStatus: window.phaseStatus,
+          eligible: window.phaseStatus !== "ENDED" && result.eligible,
+          checked: true,
+          reason:
+            result.reason ??
+            (result.eligible
+              ? window.phaseStatus === "LIVE"
+                ? "Wallet is eligible and the phase is live."
+                : "Wallet is eligible for this phase."
+              : "Wallet is not eligible for this phase.")
+        };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        const is404 = msg.includes("404");
+        return {
+          phaseType: window.phaseType,
+          startTime: window.startTime,
+          endTime: window.endTime,
+          phaseStatus: window.phaseStatus,
+          // Never assume eligible when we cannot verify — 404 means the API
+          // endpoint doesn't exist, not that the wallet is whitelisted.
+          eligible: false,
+          checked: false,
+          reason: is404
+            ? "Eligibility could not be verified via OpenSea API — check manually on opensea.io."
+            : msg
+        };
+      }
     }
+
+    // Fire all (wallet × phase) checks concurrently — all results are settled
+    // even if individual OpenSea calls fail, so one bad call won't abort others.
+    const walletResults = await Promise.all(
+      wallets.map(async (wallet) => {
+        const phases = await Promise.all(
+          phaseWindows.map((window) => checkPhaseForWallet(wallet, window))
+        );
+        return {
+          walletId: wallet.id,
+          walletName: wallet.name,
+          walletAddress: wallet.address,
+          eligiblePhaseTypes: phases.filter((phase) => phase.eligible).map((phase) => phase.phaseType),
+          unverifiablePhaseTypes: phases.filter((phase) => !phase.checked).map((phase) => phase.phaseType),
+          phases
+        };
+      })
+    );
 
     return {
       collectionId: collection.id,
