@@ -128,6 +128,29 @@ export class OpenSeaClient {
     return { ...info, phases };
   }
 
+  async scanDropByContract(contractAddress: string, chain: "ethereum" | "base"): Promise<CollectionInfo> {
+    // Resolve slug from contract address via OpenSea API
+    let slug: string | undefined;
+    try {
+      const data = await this.request<Record<string, unknown>>(
+        `/chain/${chain}/contract/${contractAddress}`
+      );
+      slug = typeof data.collection === "string" ? data.collection : undefined;
+    } catch {
+      // If the direct contract lookup fails, fall through to slug-less error below
+    }
+
+    if (!slug) {
+      throw new Error(
+        `No collection found on OpenSea for contract ${contractAddress} on ${chain}. Make sure the contract is listed on OpenSea.`
+      );
+    }
+
+    const info = await this.getCollectionInfo(slug);
+    const phases = await this.getDropPhases(slug);
+    return { ...info, phases };
+  }
+
   async getCollectionInfo(slug: string): Promise<CollectionInfo> {
     const data = await this.request<Record<string, unknown>>(`/collections/${slug}`);
     const contracts = (data.contracts as Array<Record<string, unknown>> | undefined) ?? [];
@@ -493,7 +516,7 @@ export class OpenSeaClient {
     return payload;
   }
 
-  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+  private async request<T>(path: string, init?: RequestInit, timeoutMs = 8_000): Promise<T> {
     const cacheKey = init?.method && init.method !== "GET" ? undefined : path;
     if (cacheKey) {
       const cached = this.cache.get(cacheKey);
@@ -502,9 +525,12 @@ export class OpenSeaClient {
 
     let lastError: unknown;
     for (let attempt = 0; attempt < 3; attempt += 1) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
           ...init,
+          signal: controller.signal,
           headers: {
             accept: "application/json",
             "content-type": "application/json",
@@ -512,6 +538,7 @@ export class OpenSeaClient {
             ...init?.headers
           }
         });
+        clearTimeout(timer);
         if (response.ok) {
           const data = (await response.json()) as T;
           if (cacheKey) this.cache.set(cacheKey, { expiresAt: Date.now() + 30_000, value: data });
@@ -520,6 +547,11 @@ export class OpenSeaClient {
         if (response.status === 429) throw new Error("OpenSea rate limit reached. Try again shortly.");
         throw new Error(`OpenSea request failed with ${response.status}: ${await errorDetails(response)}`);
       } catch (error) {
+        clearTimeout(timer);
+        // Don't retry on abort (timeout) — the endpoint is clearly too slow.
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new Error(`OpenSea request timed out after ${timeoutMs}ms: ${path}`);
+        }
         lastError = error;
         await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
       }

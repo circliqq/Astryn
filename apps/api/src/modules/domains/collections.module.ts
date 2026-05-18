@@ -1,8 +1,8 @@
 import { BadRequestException, Body, Controller, Get, Module, NotFoundException, Param, Post, Query, UseGuards } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { MintPhaseType } from "@prisma/client";
-import { IsArray, IsIn, IsString } from "class-validator";
-import { OpenSeaClient } from "@mint-copilot/opensea";
+import { IsArray, IsIn, IsOptional, IsString } from "class-validator";
+import { OpenSeaClient, type DropPhase } from "@mint-copilot/opensea";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -61,7 +61,7 @@ class CollectionsController {
           mintPriceWei: drop.phases[0]?.priceEth ? ethToWei(drop.phases[0].priceEth) : "0",
           supply: drop.supply,
           phases: {
-            create: drop.phases.map((phase) => ({
+            create: drop.phases.map((phase: DropPhase) => ({
               phaseType: phaseTypeToPrisma(phase.type),
               priceWei: ethToWei(phase.priceEth),
               startTime: new Date(phase.startTime),
@@ -78,7 +78,7 @@ class CollectionsController {
           mintPriceWei: drop.phases[0]?.priceEth ? ethToWei(drop.phases[0].priceEth) : undefined,
           phases: {
             deleteMany: {},
-            create: drop.phases.map((phase) => ({
+            create: drop.phases.map((phase: DropPhase) => ({
               phaseType: phaseTypeToPrisma(phase.type),
               priceWei: ethToWei(phase.priceEth),
               startTime: new Date(phase.startTime),
@@ -201,21 +201,53 @@ class CollectionsController {
 
     // Fire all (wallet × phase) checks concurrently — all results are settled
     // even if individual OpenSea calls fail, so one bad call won't abort others.
-    const walletResults = await Promise.all(
-      wallets.map(async (wallet) => {
-        const phases = await Promise.all(
-          phaseWindows.map((window) => checkPhaseForWallet(wallet, window))
-        );
-        return {
+    // A 45 s overall deadline prevents the endpoint from ever hitting nginx's
+    // 60 s gateway timeout: any check still pending becomes "unverifiable".
+    const OVERALL_TIMEOUT_MS = 45_000;
+    const deadlineResult = Symbol("deadline");
+    const deadline = new Promise<typeof deadlineResult>((resolve) =>
+      setTimeout(() => resolve(deadlineResult), OVERALL_TIMEOUT_MS)
+    );
+
+    const walletResultsOrTimeout = await Promise.race([
+      Promise.all(
+        wallets.map(async (wallet) => {
+          const phases = await Promise.all(
+            phaseWindows.map((window) => checkPhaseForWallet(wallet, window))
+          );
+          return {
+            walletId: wallet.id,
+            walletName: wallet.name,
+            walletAddress: wallet.address,
+            eligiblePhaseTypes: phases.filter((phase) => phase.eligible).map((phase) => phase.phaseType),
+            unverifiablePhaseTypes: phases.filter((phase) => !phase.checked).map((phase) => phase.phaseType),
+            phases
+          };
+        })
+      ),
+      deadline
+    ]);
+
+    // If we hit the deadline, return stub "unverifiable" entries so the
+    // frontend shows something useful rather than a hard 504.
+    const walletResults = walletResultsOrTimeout === deadlineResult
+      ? wallets.map((wallet) => ({
           walletId: wallet.id,
           walletName: wallet.name,
           walletAddress: wallet.address,
-          eligiblePhaseTypes: phases.filter((phase) => phase.eligible).map((phase) => phase.phaseType),
-          unverifiablePhaseTypes: phases.filter((phase) => !phase.checked).map((phase) => phase.phaseType),
-          phases
-        };
-      })
-    );
+          eligiblePhaseTypes: [] as typeof phaseWindows[number]["phaseType"][],
+          unverifiablePhaseTypes: phaseWindows.map((w) => w.phaseType),
+          phases: phaseWindows.map((window) => ({
+            phaseType: window.phaseType,
+            startTime: window.startTime,
+            endTime: window.endTime,
+            phaseStatus: window.phaseStatus,
+            eligible: false,
+            checked: false,
+            reason: "Eligibility check timed out — OpenSea API is slow. Check manually on opensea.io."
+          }))
+        }))
+      : walletResultsOrTimeout;
 
     return {
       collectionId: collection.id,
@@ -286,10 +318,88 @@ class CollectionsController {
   }
 }
 
-@Module({ controllers: [CollectionsController] })
+class ScanByContractDto {
+  @IsString()
+  contractAddress!: string;
+
+  @IsOptional()
+  @IsIn(["ethereum", "base"])
+  chain?: "ethereum" | "base";
+}
+
+@Controller("collections")
+@UseGuards(AuthGuard)
+class CollectionsByContractController {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService
+  ) {}
+
+  @Post("scan-by-contract")
+  async scanByContract(@Body() body: ScanByContractDto) {
+    const normalized = normalizeContractAddress(body.contractAddress);
+    if (!normalized) {
+      throw new BadRequestException("Enter a valid contract address (0x…).");
+    }
+
+    const chain = (body.chain ?? "ethereum") as "ethereum" | "base";
+
+    try {
+      const client = new OpenSeaClient({ apiKey: this.config.getOrThrow<string>("OPENSEA_API_KEY") });
+      const drop = await client.scanDropByContract(normalized, chain);
+      const collection = await this.prisma.collection.upsert({
+        where: { slug_chain: { slug: drop.slug, chain: chain === "base" ? "BASE" : "ETHEREUM" } },
+        create: {
+          slug: drop.slug,
+          name: drop.name,
+          imageUrl: drop.imageUrl,
+          chain: chain === "base" ? "BASE" : "ETHEREUM",
+          contractAddress: drop.contractAddress,
+          mintPriceWei: drop.phases[0]?.priceEth ? ethToWei(drop.phases[0].priceEth) : "0",
+          supply: drop.supply,
+          phases: {
+            create: drop.phases.map((phase: DropPhase) => ({
+              phaseType: phaseTypeToPrisma(phase.type),
+              priceWei: ethToWei(phase.priceEth),
+              startTime: new Date(phase.startTime),
+              endTime: phase.endTime ? new Date(phase.endTime) : undefined,
+              maxMint: phase.maxMintPerWallet ?? null
+            }))
+          }
+        },
+        update: {
+          name: drop.name,
+          imageUrl: drop.imageUrl,
+          contractAddress: drop.contractAddress,
+          supply: drop.supply,
+          mintPriceWei: drop.phases[0]?.priceEth ? ethToWei(drop.phases[0].priceEth) : undefined,
+          phases: {
+            deleteMany: {},
+            create: drop.phases.map((phase: DropPhase) => ({
+              phaseType: phaseTypeToPrisma(phase.type),
+              priceWei: ethToWei(phase.priceEth),
+              startTime: new Date(phase.startTime),
+              endTime: phase.endTime ? new Date(phase.endTime) : undefined,
+              maxMint: phase.maxMintPerWallet ?? null
+            }))
+          }
+        },
+        include: collectionInclude
+      });
+      return collection;
+    } catch (error) {
+      if (error instanceof BadRequestException) throw error;
+      const message = error instanceof Error ? error.message : "Scan failed";
+      throw new BadRequestException(message);
+    }
+  }
+}
+
+@Module({ controllers: [CollectionsController, CollectionsByContractController] })
 export class CollectionsModule {}
 
-function normalizeContractAddress(address: string) {
-  const match = address.match(/0x[a-fA-F0-9]{40}/);
-  return match?.[0].toLowerCase() ?? null;
+function normalizeContractAddress(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(trimmed)) return trimmed.toLowerCase();
+  return null;
 }

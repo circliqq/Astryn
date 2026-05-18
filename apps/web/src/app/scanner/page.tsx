@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, ExternalLink, Radar } from "lucide-react";
+import { CheckCircle2, ExternalLink, Hash, Link2, Radar } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge, Button, Input, Panel } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
@@ -34,23 +34,52 @@ function formatEth(wei: string) {
   }
 }
 
+type ScanMode = "url" | "contract";
+
 export default function ScannerPage() {
   const router = useRouter();
+
+  const [scanMode, setScanMode] = useState<ScanMode>("url");
+
+  // URL mode
   const [url, setUrl] = useState("");
+
+  // Contract address mode
+  const [contractAddress, setContractAddress] = useState("");
+  const [chain, setChain] = useState<"ethereum" | "base">("ethereum");
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [collection, setCollection] = useState<Collection | null>(null);
 
   async function handleScan() {
-    if (!url.trim()) return;
     setLoading(true);
     setError(null);
     setCollection(null);
+
     try {
-      const data = await apiFetch<Collection>("/collections/scan", {
-        method: "POST",
-        body: JSON.stringify({ url: url.trim() }),
-      });
+      let data: Collection;
+
+      if (scanMode === "url") {
+        if (!url.trim()) { setLoading(false); return; }
+        data = await apiFetch<Collection>("/collections/scan", {
+          method: "POST",
+          body: JSON.stringify({ url: url.trim() }),
+        });
+      } else {
+        const addr = contractAddress.trim();
+        if (!addr) { setLoading(false); return; }
+        if (!/^0x[0-9a-fA-F]{40}$/.test(addr)) {
+          setError("Enter a valid contract address (0x followed by 40 hex characters).");
+          setLoading(false);
+          return;
+        }
+        data = await apiFetch<Collection>("/collections/scan-by-contract", {
+          method: "POST",
+          body: JSON.stringify({ contractAddress: addr, chain }),
+        });
+      }
+
       setCollection(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Scan failed.");
@@ -61,6 +90,7 @@ export default function ScannerPage() {
 
   const phase = collection?.phases?.[0] ?? null;
   const chainLabel = collection?.chain === "ETHEREUM" ? "Ethereum" : "Base";
+  const canScan = scanMode === "url" ? url.trim().length > 0 : contractAddress.trim().length > 0;
 
   return (
     <AppShell title="Collection Scanner">
@@ -68,26 +98,97 @@ export default function ScannerPage() {
         <Panel>
           <div className="panel-header">
             <div>
-              <p className="text-[14px] font-semibold text-graphite-100">OpenSea Drop Scanner</p>
-              <p className="mt-0.5 text-[12px] text-graphite-500">Inspect collection metadata before creating a mint task.</p>
+              <p className="text-[14px] font-semibold text-graphite-100">Collection Scanner</p>
+              <p className="mt-0.5 text-[12px] text-graphite-500">
+                Inspect collection metadata before creating a mint task.
+              </p>
             </div>
             <Radar size={18} className="text-graphite-500" />
           </div>
+
+          {/* Mode toggle */}
+          <div className="flex gap-1 rounded-md border border-graphite-700 bg-graphite-800/60 p-1 mx-5 mt-4 w-fit">
+            <button
+              type="button"
+              onClick={() => { setScanMode("url"); setError(null); setCollection(null); }}
+              className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                scanMode === "url"
+                  ? "bg-graphite-700 text-graphite-100"
+                  : "text-graphite-500 hover:text-graphite-300"
+              }`}
+            >
+              <Link2 size={12} />
+              OpenSea URL
+            </button>
+            <button
+              type="button"
+              onClick={() => { setScanMode("contract"); setError(null); setCollection(null); }}
+              className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${
+                scanMode === "contract"
+                  ? "bg-graphite-700 text-graphite-100"
+                  : "text-graphite-500 hover:text-graphite-300"
+              }`}
+            >
+              <Hash size={12} />
+              Contract Address
+            </button>
+          </div>
+
           <div className="p-5">
-            <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-graphite-500">Drop or collection URL</label>
-            <div className="mt-3 flex flex-col gap-3 md:flex-row">
-              <Input
-                className="flex-1"
-                value={url}
-                onChange={(event) => setUrl(event.target.value)}
-                placeholder="https://opensea.io/drops/..."
-                onKeyDown={(event) => event.key === "Enter" && handleScan()}
-              />
-              <Button type="button" onClick={handleScan} disabled={loading || !url.trim()}>
-                {loading ? "Scanning..." : "Scan Drop"}
-              </Button>
-            </div>
-            {error && <p className="mt-3 rounded-md border border-status-red-border bg-status-red-bg px-3 py-2 text-[12px] text-status-red-text">{error}</p>}
+            {scanMode === "url" ? (
+              <>
+                <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-graphite-500">
+                  Drop or collection URL
+                </label>
+                <div className="mt-3 flex flex-col gap-3 md:flex-row">
+                  <Input
+                    className="flex-1"
+                    value={url}
+                    onChange={(e) => setUrl(e.target.value)}
+                    placeholder="https://opensea.io/drops/..."
+                    onKeyDown={(e) => e.key === "Enter" && handleScan()}
+                  />
+                  <Button type="button" onClick={handleScan} disabled={loading || !canScan}>
+                    {loading ? "Scanning..." : "Scan Drop"}
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-graphite-500">
+                  Contract address
+                </label>
+                <div className="mt-3 flex flex-col gap-3 md:flex-row">
+                  <Input
+                    className="flex-1 font-mono"
+                    value={contractAddress}
+                    onChange={(e) => setContractAddress(e.target.value)}
+                    placeholder="0x..."
+                    onKeyDown={(e) => e.key === "Enter" && handleScan()}
+                  />
+                  <select
+                    value={chain}
+                    onChange={(e) => setChain(e.target.value as "ethereum" | "base")}
+                    className="rounded-md border border-graphite-700 bg-graphite-800 px-3 py-2 text-[13px] text-graphite-100 focus:border-brand focus:outline-none"
+                  >
+                    <option value="ethereum">Ethereum</option>
+                    <option value="base">Base</option>
+                  </select>
+                  <Button type="button" onClick={handleScan} disabled={loading || !canScan}>
+                    {loading ? "Scanning..." : "Scan Drop"}
+                  </Button>
+                </div>
+                <p className="mt-2 text-[11px] text-graphite-500">
+                  Looks up the collection on OpenSea by contract address — no URL needed.
+                </p>
+              </>
+            )}
+
+            {error && (
+              <p className="mt-3 rounded-md border border-status-red-border bg-status-red-bg px-3 py-2 text-[12px] text-status-red-text">
+                {error}
+              </p>
+            )}
           </div>
         </Panel>
 
@@ -143,7 +244,10 @@ export default function ScannerPage() {
             </Panel>
 
             <div className="flex justify-center">
-              <Button type="button" onClick={() => router.push(`/mint-setup?collectionId=${collection.id}`)}>
+              <Button
+                type="button"
+                onClick={() => router.push(`/mint-setup?collectionId=${collection.id}`)}
+              >
                 Continue to Mint Setup <ExternalLink size={15} />
               </Button>
             </div>

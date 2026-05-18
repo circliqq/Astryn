@@ -14,7 +14,10 @@ export type MintEventName =
   | "sniper.task.updated"
   | "bot.competition.detected"
   | "bundle.status.changed"
-  | "sweep.detected";
+  | "sweep.detected"
+  | "direct-mint.task.created"
+  | "direct-mint.task.queued"
+  | "direct-mint.task.canceled";
 
 @WebSocketGateway({ cors: true, namespace: "/events" })
 export class EventsGateway {

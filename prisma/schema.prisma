@@ -98,6 +98,7 @@ model User {
   userBansIssued     UserBan[]              @relation("UserBanAdmin")
   usageMetrics       UsageMetric[]
   featureFlagsUpdated FeatureFlag[]         @relation("FeatureFlagUpdater")
+  directMintTasks     DirectMintTask[]
 
   @@index([role])
   @@index([bannedAt])
@@ -136,6 +137,7 @@ model Wallet {
   user                  User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   groups                WalletGroupMember[]
   taskWallets           MintTaskWallet[]
+  directMintTaskWallets DirectMintTaskWallet[]
   transactions          Transaction[]
   healthChecks          WalletHealthCheck[]
   simulationResults     SimulationResult[]
@@ -824,4 +826,58 @@ model UsageMetric {
   @@unique([userId, metric, date])
   @@index([metric, date])
   @@index([date])
+}
+
+// ── Direct Contract Mint ──────────────────────────────────────────────────
+
+model DirectMintTask {
+  id              String                 @id @default(uuid())
+  userId          String
+  contractAddress String
+  chain           Network
+  functionName    String
+  functionAbi     Json                   // single ABI function entry
+  callArgs        Json                   // array of arg values
+  valueWei        String                 @default("0")
+  status          MintTaskStatus         @default(DRAFT)
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  gasSettingsJson Json
+  mintQuantity    Int                    @default(1)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallets         DirectMintTaskWallet[]
+  logs            DirectMintLog[]
+
+  @@index([userId, status])
+  @@index([contractAddress])
+}
+
+model DirectMintTaskWallet {
+  id               String         @id @default(uuid())
+  directMintTaskId String
+  walletId         String
+  status           String         @default("waiting")
+  mintQuantity     Int            @default(1)
+  txHash           String?
+  errorMessage     String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  directMintTask   DirectMintTask @relation(fields: [directMintTaskId], references: [id], onDelete: Cascade)
+  wallet           Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@unique([directMintTaskId, walletId])
+}
+
+model DirectMintLog {
+  id               String         @id @default(uuid())
+  directMintTaskId String
+  level            String         @default("info")
+  message          String
+  createdAt        DateTime       @default(now())
+  directMintTask   DirectMintTask @relation(fields: [directMintTaskId], references: [id], onDelete: Cascade)
+
+  @@index([directMintTaskId, createdAt])
 }
