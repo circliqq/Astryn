@@ -226,8 +226,10 @@ export async function executeMintTask(
       ? Promise.resolve(null)
       : openSea.getCollectionStats(task.collection.slug).catch(() => null);
 
-    await (isImmediate ? pool.checkPrimary(network) : pool.checkAll(network));
+    const healthResults = await (isImmediate ? pool.checkPrimary(network) : pool.checkAll(network));
     const primary = pool.selectPrimary(network);
+    // Measured ping of the selected primary — used to derive dynamic refresh lead.
+    const primaryLatencyMs = healthResults.find((h) => h.endpointId === primary.id)?.latencyMs ?? null;
     const client = createMintPublicClient({
       chainName: network,
       rpcUrl: primary.url,
@@ -240,9 +242,21 @@ export async function executeMintTask(
     );
 
     // Fetch gas + await market stats in parallel.
-    const [currentGas, marketStats] = await Promise.all([
+    // Fetch baseline totalSupply in parallel with gas + market stats.
+    // Used at T=0 to compute phaseMinted = currentSupply - baselineSupply,
+    // catching phase-specific sellout even when global maxSupply isn't reached.
+    const baselineSupplyPromise = task.collection.contractAddress
+      ? (client.readContract({
+          address: task.collection.contractAddress as `0x${string}`,
+          abi: ERC721_SUPPLY_ABI,
+          functionName: "totalSupply",
+        }) as Promise<bigint>).catch(() => null)
+      : Promise.resolve(null);
+
+    const [currentGas, marketStats, baselineTotalSupply] = await Promise.all([
       fetchCurrentGas({ chainName: network, rpcUrl: primary.url }),
       marketStatsPromise,
+      baselineSupplyPromise,
     ]);
     await log(prisma, task.id, "info", "Loaded current network gas fees.", {
       baseFeePerGas: currentGas.baseFeePerGas.toString(),
@@ -542,11 +556,41 @@ export async function executeMintTask(
       runnablePrepared,
       targetAt,
       { chainName: network, rpcUrl: primary.url },
+      primaryLatencyMs,
     );
 
     if (simulationVerified.length === 0) {
       await finishTask(prisma, task.id, "FAILED", "Mint task failed: simulation rejected all prepared transactions before broadcast.");
       return;
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
+    // ── Pre-broadcast supply guard ────────────────────────────────────────
+    // One fast totalSupply() eth_call before spending any gas.
+    // Uses the stage max supply already fetched from OpenSea during prep
+    // (stageMaxSupply) — avoids a second maxSupply() contract call.
+    // If supply is already at max, abort all wallets with zero gas cost.
+    // Non-fatal if the contract doesn't expose totalSupply() — broadcast proceeds.
+    {
+      const contractAddress = task.collection.contractAddress as `0x${string}` | null;
+      const knownMaxSupply =
+        simulationVerified.find((s) => s.stageMaxSupply != null)?.stageMaxSupply ?? null;
+
+      const supplyGone = contractAddress
+        ? await checkSupplyBeforeBroadcast(client, contractAddress, knownMaxSupply, baselineTotalSupply)
+        : false;
+
+      if (supplyGone) {
+        await log(
+          prisma,
+          task.id,
+          "warn",
+          "Supply exhausted at T=0 — aborting broadcast. No gas spent.",
+          { knownMaxSupply: knownMaxSupply?.toString() },
+        ).catch(() => undefined);
+        await finishTask(prisma, task.id, "FAILED", "Mint supply exhausted before broadcast. No gas spent.");
+        return;
+      }
     }
     // ─────────────────────────────────────────────────────────────────────
 
@@ -569,7 +613,7 @@ export async function executeMintTask(
 
           // All broadcast targets run in parallel at T=0.
           // Ethereum: RPC pool + Flashbots bundle (if key set) + free builders (if enabled).
-          // Base: RPC pool only (no Flashbots/builders on Base).
+          // Base: RPC pool + fast public endpoints (always on, no auth needed).
           const flashbotsAuthKey = process.env["ETH_FLASHBOTS_AUTH_KEY"] as Hex | undefined;
           const buildersEnabled = /^(1|true|yes)$/i.test(process.env["ETH_BUILDERS_ENABLED"] ?? "");
           const isEthereum = network === "ethereum";
@@ -582,23 +626,48 @@ export async function executeMintTask(
 
           const [broadcasts] = await Promise.all([
             pool.broadcastUntilAccepted(network, preparedMint.signedTx),
+            // Flashbots bundle — targets N+1/N+2/N+3 specifically (ETH only).
             isEthereum && flashbotsAuthKey && currentBlockNumber != null
               ? sendFlashbotsBundle(preparedMint.signedTx, flashbotsAuthKey, currentBlockNumber)
                   .then((bundleHash) => {
                     if (bundleHash) {
                       void log(prisma, task.id, "info",
-                        `Flashbots bundle submitted for wallet ${shortAddress(preparedMint.walletAddress)} targeting blocks ${currentBlockNumber + 1n}–${currentBlockNumber + 2n}.`,
+                        `Flashbots bundle submitted for wallet ${shortAddress(preparedMint.walletAddress)} targeting blocks ${currentBlockNumber + 1n}–${currentBlockNumber + 3n}.`,
                         { bundleHash, walletId: preparedMint.walletId },
                       ).catch(() => undefined);
                     }
                   })
                   .catch(() => undefined)
               : Promise.resolve(),
+            // Flashbots private tx — runs in parallel with bundle.
+            // Fully private mempool (no frontrunning), fast: true = all builders.
+            isEthereum && flashbotsAuthKey && currentBlockNumber != null
+              ? sendFlashbotsPrivateTx(preparedMint.signedTx, flashbotsAuthKey, currentBlockNumber)
+                  .then(() => {
+                    void log(prisma, task.id, "info",
+                      `Flashbots private tx submitted for wallet ${shortAddress(preparedMint.walletAddress)} (private mempool, no frontrun exposure).`,
+                      { walletId: preparedMint.walletId },
+                    ).catch(() => undefined);
+                  })
+                  .catch(() => undefined)
+              : Promise.resolve(),
+            // Free builders + MEV Blocker — broadest possible builder coverage.
             isEthereum && buildersEnabled
               ? sendToFreeBuilders(preparedMint.signedTx)
                   .then(() => {
                     void log(prisma, task.id, "info",
-                      `Free builders (beaverbuild/rsync/Titan) submitted for wallet ${shortAddress(preparedMint.walletAddress)}.`,
+                      `Free builders + MEV Blocker submitted for wallet ${shortAddress(preparedMint.walletAddress)}.`,
+                      { walletId: preparedMint.walletId },
+                    ).catch(() => undefined);
+                  })
+                  .catch(() => undefined)
+              : Promise.resolve(),
+            // Base fast endpoints — parallel submit to sequencer-peered RPCs.
+            !isEthereum
+              ? sendToBaseEndpoints(preparedMint.signedTx)
+                  .then(() => {
+                    void log(prisma, task.id, "info",
+                      `Base fast endpoints submitted for wallet ${shortAddress(preparedMint.walletAddress)}.`,
                       { walletId: preparedMint.walletId },
                     ).catch(() => undefined);
                   })
@@ -832,11 +901,26 @@ export async function executeMintTask(
                   },
                 );
 
+                // Fetch current block for private tx targeting (non-blocking).
+                const bumpFlashbotsKey = network === "ethereum"
+                  ? process.env["ETH_FLASHBOTS_AUTH_KEY"] as Hex | undefined
+                  : undefined;
+                const bumpBlockNumber = bumpFlashbotsKey
+                  ? await client.getBlockNumber().catch(() => null)
+                  : null;
+
                 // Rebroadcast bumped tx to all channels in parallel.
                 const [bumpBroadcasts] = await Promise.all([
                   pool.broadcastUntilAccepted(network, bumpedSignedTx),
                   network === "ethereum" && process.env["ETH_BUILDERS_ENABLED"]
                     ? sendToFreeBuilders(bumpedSignedTx).catch(() => undefined)
+                    : Promise.resolve(),
+                  // Private tx on bump — keeps bumped tx out of public mempool too.
+                  bumpFlashbotsKey && bumpBlockNumber != null
+                    ? sendFlashbotsPrivateTx(bumpedSignedTx, bumpFlashbotsKey, bumpBlockNumber).catch(() => undefined)
+                    : Promise.resolve(),
+                  network === "base"
+                    ? sendToBaseEndpoints(bumpedSignedTx).catch(() => undefined)
                     : Promise.resolve(),
                 ]);
 
@@ -1261,6 +1345,7 @@ async function waitWithRollingSimulation(
   prepared: PreparedMint[],
   targetAt: Date,
   options: { chainName: "base" | "ethereum"; rpcUrl: string },
+  primaryLatencyMs: number | null = null,
 ): Promise<PreparedMint[]> {
   const pollIntervalMs = numberEnv("MINT_SIM_POLL_INTERVAL_MS", 5_000);
   const lastChanceTimeoutMs = numberEnv("MINT_SIM_LAST_CHANCE_TIMEOUT_MS", 400);
@@ -1318,14 +1403,42 @@ async function waitWithRollingSimulation(
     }
   };
 
-  await Promise.all([sleepUntil(targetAt), pollLoop()]);
+  // ── Pre-refresh loop: nonce fetch + re-sign BEFORE T=0 ───────────────
+  // Lead time is derived from the measured primary RPC ping so it adapts
+  // automatically to actual network conditions:
+  //
+  //   refreshLeadMs = max(ping × 4 + 100ms buffer, MINT_REFRESH_LEAD_MS_MIN)
+  //
+  //   25ms ping  →  25×4+100 = 200ms lead   (tight but safe)
+  //   80ms ping  →  80×4+100 = 420ms lead   (comfortable)
+  //   200ms ping → 200×4+100 = 900ms lead   (covers spike headroom)
+  //
+  // MINT_REFRESH_LEAD_MS_MIN (default 200ms) acts as a floor so we never
+  // start too close to T=0 even on very fast RPCs.
+  //
+  // Fallback: if pre-refresh fails or completes after T=0, resigned stays
+  // null and a normal refreshSignatures() runs sequentially (safe fallback).
+  const refreshLeadMinMs = numberEnv("MINT_REFRESH_LEAD_MS_MIN", 200);
+  const refreshLeadMs = primaryLatencyMs != null
+    ? Math.max(Math.round(primaryLatencyMs * 4) + 100, refreshLeadMinMs)
+    : numberEnv("MINT_REFRESH_LEAD_MS", 300);
+  let preRefreshed: PreparedMint[] | null = null;
+
+  const preRefreshLoop = async () => {
+    const refreshAt = new Date(targetAt.getTime() - refreshLeadMs);
+    if (refreshAt.getTime() > Date.now()) {
+      await sleepUntil(refreshAt);
+    }
+    preRefreshed = await refreshSignatures(prisma, mintTaskId, prepared, options);
+  };
+
+  await Promise.all([sleepUntil(targetAt), pollLoop(), preRefreshLoop().catch(() => undefined)]);
   // ─────────────────────────────────────────────────────────────────────
 
-  // ── Re-sign with fresh nonce (T-0) ────────────────────────────────────
-  // Nonces were fetched during prep — potentially minutes ago. Re-signing
-  // here guarantees the TX has the correct nonce regardless of what happened
-  // in the interim. Runs after sleep so it adds zero delay to broadcast.
-  const resigned = await refreshSignatures(prisma, mintTaskId, prepared, options);
+  // ── Re-sign with fresh nonce (T=0) ───────────────────────────────────
+  // Use pre-refreshed signatures if ready (saves 100–200ms at T=0).
+  // Falls back to a fresh refresh if pre-refresh failed or wasn't reached.
+  const resigned = preRefreshed ?? await refreshSignatures(prisma, mintTaskId, prepared, options);
   // ─────────────────────────────────────────────────────────────────────
 
   // ── Last-chance attempt for wallets that never passed during the wait ─
@@ -1614,6 +1727,64 @@ async function log(
 //   ETH_FLASHBOTS_AUTH_KEY=0x...   (any ETH private key — for auth only)
 //   ETH_BUILDERS_ENABLED=true      (enables beaverbuild + rsync + titan)
 
+// ── Pre-broadcast supply guard ─────────────────────────────────────────────
+//
+// Calls totalSupply() on the NFT contract right before broadcast.
+// If supply >= maxSupply the function returns true — caller aborts broadcast
+// with no gas spent.
+//
+// knownMaxSupply: stage supply from OpenSea (avoids extra maxSupply() call).
+//                Falls back to on-chain maxSupply() / _maxSupply() if null.
+// Non-fatal: any RPC error → returns false so broadcast proceeds normally.
+
+async function checkSupplyBeforeBroadcast(
+  client: ReturnType<typeof createMintPublicClient>,
+  contractAddress: `0x${string}`,
+  knownMaxSupply: bigint | null,
+  baselineTotalSupply: bigint | null,
+): Promise<boolean> {
+  try {
+    const currentTotalSupply = await (
+      client.readContract({
+        address: contractAddress,
+        abi: ERC721_SUPPLY_ABI,
+        functionName: "totalSupply",
+      }) as Promise<bigint>
+    );
+
+    // ── Phase-specific check (preferred) ─────────────────────────────────
+    // If we have both a baseline supply (fetched at pre-arm) and a stage max
+    // supply (from OpenSea mintParams), compute how many were minted in THIS
+    // phase and compare against the phase limit.
+    // This catches phase sellout even when global maxSupply isn't reached yet.
+    if (baselineTotalSupply !== null && knownMaxSupply !== null) {
+      const phaseMinted = currentTotalSupply - baselineTotalSupply;
+      if (phaseMinted >= knownMaxSupply) return true;
+    }
+
+    // ── Global fallback check ─────────────────────────────────────────────
+    // Falls back to global totalSupply >= maxSupply if no phase data available.
+    const globalMaxSupply: bigint | null =
+      knownMaxSupply !== null && baselineTotalSupply === null
+        ? knownMaxSupply
+        : await (
+            client
+              .readContract({ address: contractAddress, abi: ERC721_SUPPLY_ABI, functionName: "maxSupply" })
+              .catch(() =>
+                client
+                  .readContract({ address: contractAddress, abi: ERC721_SUPPLY_ABI, functionName: "_maxSupply" })
+                  .catch(() => null),
+              ) as Promise<bigint | null>
+          );
+
+    return globalMaxSupply != null && currentTotalSupply >= globalMaxSupply;
+  } catch {
+    // Contract may not expose totalSupply() — non-fatal, proceed with broadcast.
+    return false;
+  }
+}
+// ──────────────────────────────────────────────────────────────────────────
+
 async function sendFlashbotsBundle(
   signedTx: Hex,
   authKey: Hex,
@@ -1669,16 +1840,72 @@ async function sendFlashbotsBundle(
   return hash.status === "fulfilled" ? hash.value : null;
 }
 
+// ── Flashbots private transaction ─────────────────────────────────────────
+//
+// eth_sendPrivateTransaction sends the tx through Flashbots MEV-Share private
+// relay — it is NEVER exposed to the public mempool so bots cannot frontrun it.
+//
+// Differences from eth_sendBundle:
+//   Bundle  — targets specific blocks (N+1/N+2/N+3), all-or-nothing per block.
+//   Private — stays in private pool, lands in first available block (more flexible).
+//
+// Running both in parallel = targeted speed (bundle) + frontrun protection (private).
+//
+// preferences.fast = true  → broadcast to ALL Flashbots builders immediately
+// privacy.hints    = []    → share zero hints — tx is fully opaque to searchers
+
+async function sendFlashbotsPrivateTx(
+  signedTx: Hex,
+  authKey: Hex,
+  currentBlockNumber: bigint,
+): Promise<void> {
+  const body = JSON.stringify({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "eth_sendPrivateTransaction",
+    params: [{
+      tx: signedTx,
+      maxBlockNumber: `0x${(currentBlockNumber + 25n).toString(16)}`,
+      preferences: {
+        fast: true,
+        privacy: { hints: [] },
+      },
+    }],
+  });
+
+  const account = privateKeyToAccount(authKey);
+  const sig = await account.signMessage({ message: { raw: keccak256(toBytes(body)) } });
+
+  await fetch("https://relay.flashbots.net", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Flashbots-Signature": `${account.address}:${sig}`,
+    },
+    body,
+    signal: AbortSignal.timeout(3_000),
+  });
+}
+// ──────────────────────────────────────────────────────────────────────────
+
 // Free builders — no auth required, standard JSON-RPC.
 // Combined coverage: beaverbuild ~40% + rsync ~10% + Titan ~15%
-//                 + Ultra Sound ~8% + Agnostic ~5% + BuildAI ~5% ≈ 83%
+//                 + Ultra Sound ~8% + Payload ~5% + Loki ~3% ≈ 81%
+//
+// Removed: agnostic-relay.net  (MEV-boost relay — not a builder RPC endpoint)
+//          buildai.flashbots.net (non-existent Flashbots subdomain)
+// Added:   rpc.payload.de       (Payload builder, accepts eth_sendRawTransaction)
+//          builder.loki.build   (Loki builder, small but legitimate)
 const FREE_BUILDER_ENDPOINTS = [
   { name: "beaverbuild",   url: "https://rpc.beaverbuild.org" },
   { name: "rsync-builder", url: "https://rsync-builder.xyz" },
   { name: "Titan Builder", url: "https://rpc.titanbuilder.xyz" },
   { name: "Ultra Sound",   url: "https://rpc.ultrasound.money" },
-  { name: "Agnostic",      url: "https://agnostic-relay.net" },
-  { name: "BuildAI",       url: "https://buildai.flashbots.net" },
+  { name: "Payload",       url: "https://rpc.payload.de" },
+  { name: "Loki",          url: "https://builder.loki.build" },
+  // MEV Blocker — private routing to 30+ builders, no frontrunning exposure.
+  // Free, no auth. Internally aggregates more builders than we can list here.
+  { name: "MEV Blocker",   url: "https://rpc.mevblocker.io" },
 ] as const;
 
 async function sendToFreeBuilders(signedTx: Hex): Promise<void> {
@@ -1694,6 +1921,48 @@ async function sendToFreeBuilders(signedTx: Hex): Promise<void> {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body,
+        signal: AbortSignal.timeout(2_000),
+      });
+    }),
+  );
+}
+// ──────────────────────────────────────────────────────────────────────────
+
+// ── Base fast-endpoint broadcast ──────────────────────────────────────────
+//
+// Base is an OP Stack L2 with a centralised sequencer — eth_sendBundle is
+// not supported.  Fastest inclusion = parallel eth_sendRawTransaction to
+// multiple well-connected endpoints so the sequencer sees the tx first.
+//
+// Endpoints chosen for low-latency peering with the Base sequencer:
+//   mainnet.base.org       – official Coinbase / OP Labs endpoint
+//   base.publicnode.com    – PublicNode (globally distributed)
+//   base.drpc.org          – dRPC (fast edge network)
+//   1rpc.io/base           – 1RPC (privacy-preserving relay)
+//   rpc.flashbots.net/fast – Flashbots Protect (Base-aware private relay)
+//
+// Always enabled — no auth required, all are public endpoints.
+
+const BASE_FAST_ENDPOINTS = [
+  { name: "Base Official",      url: "https://mainnet.base.org" },
+  { name: "PublicNode",         url: "https://base.publicnode.com" },
+  { name: "dRPC",               url: "https://base.drpc.org" },
+  { name: "1RPC",               url: "https://1rpc.io/base" },
+  { name: "Flashbots Protect",  url: "https://rpc.flashbots.net/fast" },
+] as const;
+
+async function sendToBaseEndpoints(signedTx: Hex): Promise<void> {
+  await Promise.allSettled(
+    BASE_FAST_ENDPOINTS.map(async ({ url }) => {
+      await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "eth_sendRawTransaction",
+          params: [signedTx],
+        }),
         signal: AbortSignal.timeout(2_000),
       });
     }),

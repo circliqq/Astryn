@@ -11,6 +11,8 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { IsOptional, IsString } from "class-validator";
+import { keccak256, toBytes, type Hex } from "viem";
+import { privateKeyToAccount } from "viem/accounts";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
 import { EventsGateway } from "../events/events.gateway.js";
@@ -92,42 +94,87 @@ class BundlerController {
     signedTxs: string[],
     targetBlock?: string,
   ) {
-    const relayUrl =
-      network === "BASE"
-        ? "https://relay.flashbots-base.net"
-        : "https://relay.flashbots.net";
-
-    const blockParam = targetBlock
-      ? { blockNumber: targetBlock }
-      : {};
-
     try {
-      const res = await fetch(relayUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+      let bundleHash: string | null = null;
+
+      if (network === "ETHEREUM") {
+        // Ethereum: use Flashbots eth_sendBundle — targets a specific block for
+        // guaranteed inclusion attempt. Requires X-Flashbots-Signature auth header.
+        const authKey = this.config.get<string>("ETH_FLASHBOTS_AUTH_KEY") as Hex | undefined;
+        if (!authKey) throw new Error("ETH_FLASHBOTS_AUTH_KEY is not configured.");
+
+        const blockParam = targetBlock ? { blockNumber: targetBlock } : {};
+        const body = JSON.stringify({
           jsonrpc: "2.0",
           id: 1,
           method: "eth_sendBundle",
           params: [{ txs: signedTxs, ...blockParam }],
-        }),
-      });
+        });
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => res.statusText);
-        throw new Error(`Flashbots relay responded with ${res.status}: ${text}`);
+        // Sign the body hash — required by Flashbots relay to prevent spoofing.
+        const account = privateKeyToAccount(authKey);
+        const sig = await account.signMessage({ message: { raw: keccak256(toBytes(body)) } });
+        const authHeader = `${account.address}:${sig}`;
+
+        const res = await fetch("https://relay.flashbots.net", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Flashbots-Signature": authHeader,
+          },
+          body,
+          signal: AbortSignal.timeout(5_000),
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => res.statusText);
+          throw new Error(`Flashbots relay responded with ${res.status}: ${text}`);
+        }
+        const data = (await res.json()) as { result?: { bundleHash?: string }; error?: { message?: string } };
+        if (data.error) throw new Error(data.error.message ?? "Flashbots relay returned an error.");
+        bundleHash = data.result?.bundleHash ?? null;
+
+      } else {
+        // Base: OP Stack sequencer — eth_sendBundle is not supported.
+        // Fastest landing = parallel eth_sendRawTransaction to multiple
+        // well-connected Base endpoints so the sequencer sees the tx ASAP.
+        const BASE_FAST_ENDPOINTS = [
+          "https://mainnet.base.org",           // official Base RPC
+          "https://base.publicnode.com",         // PublicNode
+          "https://base.drpc.org",               // dRPC
+          "https://1rpc.io/base",                // 1RPC
+          "https://rpc.flashbots.net/fast",      // Flashbots Protect (Base-aware)
+        ];
+
+        const results = await Promise.allSettled(
+          signedTxs.flatMap((tx) =>
+            BASE_FAST_ENDPOINTS.map(async (url) => {
+              const res = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_sendRawTransaction", params: [tx] }),
+                signal: AbortSignal.timeout(3_000),
+              });
+              const data = (await res.json()) as { result?: string; error?: { message?: string } };
+              if (data.error && !/already known|known transaction/i.test(data.error.message ?? "")) {
+                throw new Error(data.error.message ?? "RPC error");
+              }
+              return data.result ?? null;
+            }),
+          ),
+        );
+
+        // Use first successful tx hash as the bundle identifier.
+        const firstHash = results.find((r) => r.status === "fulfilled" && r.value);
+        bundleHash = firstHash?.status === "fulfilled" ? firstHash.value : null;
+
+        if (results.every((r) => r.status === "rejected")) {
+          throw new Error("All Base RPC endpoints rejected the transaction.");
+        }
       }
 
-      const data = (await res.json()) as { result?: { bundleHash?: string }; error?: { message?: string } };
-
-      if (data.error) {
-        throw new Error(data.error.message ?? "Flashbots relay returned an error.");
-      }
-
-      const bundleHash = data.result?.bundleHash;
       const updated = await this.prisma.txBundle.update({
         where: { id: bundleId },
-        data: { status: "SUBMITTED", bundleHash: bundleHash ?? null },
+        data: { status: "SUBMITTED", bundleHash },
       });
       this.events.publish("bundle.status.changed", { bundleId, userId: updated.userId, status: "SUBMITTED", bundleHash });
     } catch (error) {
