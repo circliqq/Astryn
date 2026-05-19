@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Activity, BarChart3, Bell, BellRing, ClipboardCheck, Coins, Crosshair, Fuel, Home, Layers, ListTodo,
+  Activity, BarChart3, Bell, BellRing, Calculator, ClipboardCheck, Coins, Crosshair, Fuel, Home, Layers, ListTodo,
   PieChart, Puzzle, Radar, ScrollText, SendHorizonal, Settings, ShieldCheck, TrendingDown, Vault, Wallet, X,
 } from "lucide-react";
 import { Brand } from "./brand";
@@ -29,7 +29,8 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/mint-tasks", label: "Mint Tasks",   icon: ListTodo },
       { href: "/direct-mint", label: "Direct Contract Mint", icon: Puzzle },
       { href: "/whitelist-checker", label: "Whitelist Check", icon: ClipboardCheck },
-      { href: "/gas-settings", label: "Gas Settings", icon: Fuel     },
+      { href: "/gas-settings",    label: "Gas Settings",    icon: Fuel       },
+      { href: "/gas-calculator", label: "Gas Calculator", icon: Calculator  },
     ],
   },
   {

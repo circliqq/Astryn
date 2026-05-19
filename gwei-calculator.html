@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NFT Gwei Calculator</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: #0d0d1a;
+    color: #e0e0ff;
+    font-family: 'Segoe UI', sans-serif;
+    min-height: 100vh;
+    padding: 20px;
+  }
+
+  h1 {
+    text-align: center;
+    font-size: 1.6rem;
+    font-weight: 700;
+    background: linear-gradient(90deg, #a855f7, #6366f1);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin-bottom: 4px;
+  }
+
+  .subtitle {
+    text-align: center;
+    font-size: 0.75rem;
+    color: #666;
+    margin-bottom: 20px;
+  }
+
+  .card {
+    background: #13132a;
+    border: 1px solid #2a2a4a;
+    border-radius: 14px;
+    padding: 18px;
+    margin-bottom: 14px;
+  }
+
+  .card-title {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #7c7caa;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Live Price Bar */
+  .price-bar {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+
+  .price-chip {
+    flex: 1;
+    background: #1a1a35;
+    border: 1px solid #2a2a4a;
+    border-radius: 10px;
+    padding: 10px 12px;
+    text-align: center;
+  }
+
+  .price-chip .label { font-size: 0.65rem; color: #666; margin-bottom: 3px; }
+  .price-chip .value { font-size: 1rem; font-weight: 700; color: #a855f7; }
+  .price-chip .value.green { color: #22c55e; }
+  .price-chip .value.orange { color: #f97316; }
+
+  /* Gas Speed Selector */
+  .gas-speeds {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+
+  .speed-btn {
+    background: #1a1a35;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    padding: 8px 4px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .speed-btn:hover { border-color: #a855f7; }
+  .speed-btn.active { background: #2d1b4e; border-color: #a855f7; }
+  .speed-btn .speed-name { font-size: 0.65rem; color: #888; }
+  .speed-btn .speed-gwei { font-size: 0.9rem; font-weight: 700; }
+  .speed-btn .speed-time { font-size: 0.55rem; color: #555; margin-top: 1px; }
+
+  .speed-btn.slow .speed-gwei { color: #64748b; }
+  .speed-btn.standard .speed-gwei { color: #22c55e; }
+  .speed-btn.fast .speed-gwei { color: #f97316; }
+  .speed-btn.urgent .speed-gwei { color: #ef4444; }
+
+  /* Categories */
+  .categories {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+
+  .cat-btn {
+    background: #1a1a35;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    padding: 10px 14px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.2s;
+  }
+
+  .cat-btn:hover { border-color: #6366f1; }
+  .cat-btn.active { background: #1e1b4b; border-color: #6366f1; }
+  .cat-btn .cat-name { font-size: 0.8rem; font-weight: 600; }
+  .cat-btn .cat-info { font-size: 0.65rem; color: #666; }
+  .cat-btn .cat-gas { font-size: 0.75rem; color: #6366f1; font-weight: 600; }
+
+  /* Inputs */
+  .input-row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+    align-items: center;
+  }
+
+  .input-group {
+    flex: 1;
+  }
+
+  .input-group label {
+    font-size: 0.65rem;
+    color: #7c7caa;
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .input-group input {
+    width: 100%;
+    background: #1a1a35;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: #e0e0ff;
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  .input-group input:focus { border-color: #a855f7; }
+
+  /* Calculate Button */
+  .calc-btn {
+    width: 100%;
+    background: linear-gradient(90deg, #a855f7, #6366f1);
+    border: none;
+    border-radius: 10px;
+    padding: 13px;
+    color: white;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: opacity 0.2s;
+    margin-top: 4px;
+  }
+
+  .calc-btn:hover { opacity: 0.85; }
+  .calc-btn:active { opacity: 0.7; }
+
+  /* Results */
+  .results {
+    display: none;
+  }
+
+  .results.show { display: block; }
+
+  .result-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .result-item {
+    background: #1a1a35;
+    border: 1px solid #2a2a4a;
+    border-radius: 10px;
+    padding: 12px;
+    text-align: center;
+  }
+
+  .result-item .r-label { font-size: 0.6rem; color: #666; margin-bottom: 4px; }
+  .result-item .r-value { font-size: 1rem; font-weight: 700; color: #a855f7; }
+  .result-item .r-sub { font-size: 0.6rem; color: #555; margin-top: 2px; }
+
+  .result-item.highlight {
+    border-color: #a855f7;
+    background: #1e0d35;
+    grid-column: span 2;
+  }
+
+  .result-item.highlight .r-value { font-size: 1.2rem; color: #c084fc; }
+
+  /* Warning / Tip */
+  .tip-box {
+    background: #1a2a1a;
+    border: 1px solid #166534;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.72rem;
+    color: #86efac;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    margin-bottom: 10px;
+  }
+
+  .tip-box.warn {
+    background: #2a1a0a;
+    border-color: #92400e;
+    color: #fed7aa;
+  }
+
+  /* Copy output */
+  .copy-row {
+    background: #0a0a1a;
+    border: 1px solid #2a2a4a;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.7rem;
+    color: #888;
+    font-family: monospace;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    word-break: break-all;
+    cursor: pointer;
+  }
+
+  .copy-row:hover { border-color: #a855f7; color: #ccc; }
+  .copy-btn { font-size: 1rem; flex-shrink: 0; }
+
+  /* Refresh button */
+  .refresh-btn {
+    background: none;
+    border: 1px solid #2a2a4a;
+    border-radius: 6px;
+    color: #666;
+    font-size: 0.65rem;
+    padding: 3px 8px;
+    cursor: pointer;
+    margin-left: auto;
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  .refresh-btn:hover { border-color: #a855f7; color: #a855f7; }
+
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    background: #22c55e;
+    border-radius: 50%;
+    display: inline-block;
+    animation: pulse 1.5s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  .spinner {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border: 2px solid #333;
+    border-top-color: #a855f7;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .divider {
+    border: none;
+    border-top: 1px solid #2a2a4a;
+    margin: 10px 0;
+  }
+
+  .manual-toggle {
+    font-size: 0.7rem;
+    color: #6366f1;
+    cursor: pointer;
+    text-align: center;
+    margin-top: 6px;
+    text-decoration: underline;
+  }
+</style>
+</head>
+<body>
+
+<h1>⚡ NFT Gas Calculator</h1>
+<p class="subtitle">Fast Mint · Gas Estimator · USDC Converter</p>
+
+<!-- Live Price Bar -->
+<div class="price-bar">
+  <div class="price-chip">
+    <div class="label">ETH Price</div>
+    <div class="value" id="ethPrice"><span class="spinner"></span></div>
+  </div>
+  <div class="price-chip">
+    <div class="label">Base Fee</div>
+    <div class="value orange" id="baseFee"><span class="spinner"></span></div>
+  </div>
+  <div class="price-chip">
+    <div class="label">Fast Gwei</div>
+    <div class="value green" id="fastGwei"><span class="spinner"></span></div>
+  </div>
+</div>
+
+<button class="refresh-btn" onclick="fetchLiveData()">🔄 Refresh Live Data</button>
+
+<!-- Speed Selector -->
+<div class="card">
+  <div class="card-title">⚡ Gas Speed</div>
+  <div class="gas-speeds">
+    <div class="speed-btn slow" onclick="selectSpeed(this, 'slow')" id="btn-slow">
+      <div class="speed-name">Slow</div>
+      <div class="speed-gwei" id="gwei-slow">—</div>
+      <div class="speed-time">5-10 min</div>
+    </div>
+    <div class="speed-btn standard" onclick="selectSpeed(this, 'standard')" id="btn-standard">
+      <div class="speed-name">Standard</div>
+      <div class="speed-gwei" id="gwei-standard">—</div>
+      <div class="speed-time">1-3 min</div>
+    </div>
+    <div class="speed-btn fast active" onclick="selectSpeed(this, 'fast')" id="btn-fast">
+      <div class="speed-name">Fast ⚡</div>
+      <div class="speed-gwei" id="gwei-fast">—</div>
+      <div class="speed-time">~30 sec</div>
+    </div>
+    <div class="speed-btn urgent" onclick="selectSpeed(this, 'urgent')" id="btn-urgent">
+      <div class="speed-name">Urgent 🔥</div>
+      <div class="speed-gwei" id="gwei-urgent">—</div>
+      <div class="speed-time">&lt;15 sec</div>
+    </div>
+  </div>
+</div>
+
+<!-- Mint Category -->
+<div class="card">
+  <div class="card-title">🎨 Mint Category</div>
+  <div class="categories">
+    <div class="cat-btn active" onclick="selectCat(this, 65000)" id="cat-free">
+      <div>
+        <div class="cat-name">Free Mint / Claim</div>
+        <div class="cat-info">Simple claim, no payment</div>
+      </div>
+      <div class="cat-gas">~65,000</div>
+    </div>
+    <div class="cat-btn" onclick="selectCat(this, 120000)" id="cat-721">
+      <div>
+        <div class="cat-name">ERC-721 Standard</div>
+        <div class="cat-info">Single NFT mint</div>
+      </div>
+      <div class="cat-gas">~120,000</div>
+    </div>
+    <div class="cat-btn" onclick="selectCat(this, 85000)" id="cat-1155">
+      <div>
+        <div class="cat-name">ERC-1155 (Multi)</div>
+        <div class="cat-info">Batch / edition mint</div>
+      </div>
+      <div class="cat-gas">~85,000</div>
+    </div>
+    <div class="cat-btn" onclick="selectCat(this, 250000)" id="cat-lazy">
+      <div>
+        <div class="cat-name">Lazy Mint (OpenSea)</div>
+        <div class="cat-info">First sale on-chain</div>
+      </div>
+      <div class="cat-gas">~250,000</div>
+    </div>
+    <div class="cat-btn" onclick="selectCat(this, 180000)" id="cat-wl">
+      <div>
+        <div class="cat-name">Whitelist Mint</div>
+        <div class="cat-info">Merkle proof verification</div>
+      </div>
+      <div class="cat-gas">~180,000</div>
+    </div>
+    <div class="cat-btn" onclick="selectCat(this, 0, true)" id="cat-custom">
+      <div>
+        <div class="cat-name">Custom Gas Limit</div>
+        <div class="cat-info">Enter manually below</div>
+      </div>
+      <div class="cat-gas">Manual</div>
+    </div>
+  </div>
+</div>
+
+<!-- Manual Inputs -->
+<div class="card">
+  <div class="card-title">🔧 Settings</div>
+
+  <div class="input-row">
+    <div class="input-group">
+      <label>Gas Limit (units)</label>
+      <input type="number" id="gasLimit" value="120000" placeholder="e.g. 120000">
+    </div>
+    <div class="input-group">
+      <label>Gas Price (Gwei)</label>
+      <input type="number" id="gasPrice" value="" placeholder="auto">
+    </div>
+  </div>
+
+  <div class="input-row">
+    <div class="input-group">
+      <label>ETH Price (USD)</label>
+      <input type="number" id="ethPriceInput" value="" placeholder="fetching...">
+    </div>
+    <div class="input-group">
+      <label>Mint Count</label>
+      <input type="number" id="mintCount" value="1" min="1" placeholder="1">
+    </div>
+  </div>
+
+  <button class="calc-btn" onclick="calculate()">⚡ Calculate Gas Fee</button>
+</div>
+
+<!-- Results -->
+<div class="results card" id="results">
+  <div class="card-title"><span class="live-dot"></span> Results</div>
+
+  <div class="result-grid">
+    <div class="result-item highlight">
+      <div class="r-label">Total Gas Fee (ETH)</div>
+      <div class="r-value" id="r-eth">—</div>
+      <div class="r-sub" id="r-eth-sub">per mint</div>
+    </div>
+    <div class="result-item">
+      <div class="r-label">Fee in USD</div>
+      <div class="r-value" id="r-usd">—</div>
+      <div class="r-sub">approximate</div>
+    </div>
+    <div class="result-item">
+      <div class="r-label">Fee in USDC</div>
+      <div class="r-value" id="r-usdc">—</div>
+      <div class="r-sub">1 USDC ≈ $1</div>
+    </div>
+    <div class="result-item">
+      <div class="r-label">Gwei Used</div>
+      <div class="r-value" id="r-gwei">—</div>
+      <div class="r-sub" id="r-speed-label">speed</div>
+    </div>
+    <div class="result-item">
+      <div class="r-label">Gas Limit</div>
+      <div class="r-value" id="r-limit">—</div>
+      <div class="r-sub">units</div>
+    </div>
+    <div class="result-item">
+      <div class="r-label">Total for N Mints</div>
+      <div class="r-value" id="r-total">—</div>
+      <div class="r-sub" id="r-count-label">mints</div>
+    </div>
+  </div>
+
+  <div id="tip-area"></div>
+
+  <hr class="divider">
+
+  <div class="card-title">📋 MetaMask Manual Setting</div>
+  <div class="result-grid">
+    <div class="result-item">
+      <div class="r-label">Max Fee (Gwei)</div>
+      <div class="r-value" id="r-maxfee">—</div>
+      <div class="r-sub">set in MetaMask</div>
+    </div>
+    <div class="result-item">
+      <div class="r-label">Priority Fee (Tip)</div>
+      <div class="r-value" id="r-priority">—</div>
+      <div class="r-sub">miner tip</div>
+    </div>
+  </div>
+
+  <div class="copy-row" id="copyRow" onclick="copySettings()">
+    <span id="copyText">—</span>
+    <span class="copy-btn">📋</span>
+  </div>
+  <div style="font-size:0.6rem;color:#555;text-align:center;margin-top:4px" id="copyConfirm"></div>
+</div>
+
+<script>
+// State
+let state = {
+  ethPrice: null,
+  gasData: { slow: null, standard: null, fast: null, urgent: null },
+  selectedSpeed: 'fast',
+  selectedGasLimit: 120000,
+  isCustom: false
+};
+
+// Fetch live data from public APIs
+async function fetchLiveData() {
+  document.getElementById('ethPrice').innerHTML = '<span class="spinner"></span>';
+  document.getElementById('baseFee').innerHTML = '<span class="spinner"></span>';
+  document.getElementById('fastGwei').innerHTML = '<span class="spinner"></span>';
+
+  try {
+    // ETH Price from CoinGecko (free, no key)
+    const priceRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd');
+    const priceData = await priceRes.json();
+    state.ethPrice = priceData.ethereum.usd;
+    document.getElementById('ethPrice').textContent = '$' + state.ethPrice.toLocaleString();
+    document.getElementById('ethPriceInput').value = state.ethPrice;
+  } catch(e) {
+    document.getElementById('ethPrice').textContent = 'Error';
+  }
+
+  try {
+    // Gas prices from Etherscan (free tier)
+    const gasRes = await fetch('https://api.etherscan.io/api?module=gastracker&action=gasoracle&apikey=YourApiKeyToken');
+    const gasData = await gasRes.json();
+
+    if (gasData.status === '1') {
+      const safe = parseFloat(gasData.result.SafeGasPrice);
+      const proposed = parseFloat(gasData.result.ProposeGasPrice);
+      const fast = parseFloat(gasData.result.FastGasPrice);
+      const base = parseFloat(gasData.result.suggestBaseFee);
+
+      state.gasData.slow = Math.max(safe - 2, 1);
+      state.gasData.standard = proposed;
+      state.gasData.fast = fast;
+      state.gasData.urgent = Math.round(fast * 1.4);
+
+      document.getElementById('baseFee').textContent = base.toFixed(1) + ' Gwei';
+      document.getElementById('fastGwei').textContent = fast.toFixed(1) + ' Gwei';
+
+      updateSpeedButtons();
+      autoFillGasPrice();
+    } else {
+      throw new Error('API limit');
+    }
+  } catch(e) {
+    // Fallback: use reasonable estimates
+    state.gasData.slow = 8;
+    state.gasData.standard = 15;
+    state.gasData.fast = 25;
+    state.gasData.urgent = 40;
+
+    document.getElementById('baseFee').textContent = '~12 Gwei';
+    document.getElementById('fastGwei').textContent = '~25 Gwei';
+
+    updateSpeedButtons();
+    autoFillGasPrice();
+  }
+}
+
+function updateSpeedButtons() {
+  document.getElementById('gwei-slow').textContent = state.gasData.slow + ' Gwei';
+  document.getElementById('gwei-standard').textContent = state.gasData.standard + ' Gwei';
+  document.getElementById('gwei-fast').textContent = state.gasData.fast + ' Gwei';
+  document.getElementById('gwei-urgent').textContent = state.gasData.urgent + ' Gwei';
+}
+
+function autoFillGasPrice() {
+  const gwei = state.gasData[state.selectedSpeed];
+  if (gwei) document.getElementById('gasPrice').value = gwei;
+}
+
+function selectSpeed(el, speed) {
+  document.querySelectorAll('.speed-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  state.selectedSpeed = speed;
+  autoFillGasPrice();
+}
+
+function selectCat(el, gasLimit, isCustom = false) {
+  document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  state.isCustom = isCustom;
+  if (!isCustom) {
+    state.selectedGasLimit = gasLimit;
+    document.getElementById('gasLimit').value = gasLimit;
+    document.getElementById('gasLimit').readOnly = true;
+    document.getElementById('gasLimit').style.opacity = '0.6';
+  } else {
+    document.getElementById('gasLimit').readOnly = false;
+    document.getElementById('gasLimit').style.opacity = '1';
+    document.getElementById('gasLimit').focus();
+  }
+}
+
+function calculate() {
+  const gasLimit = parseInt(document.getElementById('gasLimit').value) || 120000;
+  const gasPrice = parseFloat(document.getElementById('gasPrice').value) || state.gasData[state.selectedSpeed] || 25;
+  const ethPrice = parseFloat(document.getElementById('ethPriceInput').value) || state.ethPrice || 2100;
+  const mintCount = parseInt(document.getElementById('mintCount').value) || 1;
+
+  // Core calculation
+  const feeEth = (gasLimit * gasPrice) / 1e9;
+  const feeUsd = feeEth * ethPrice;
+  const feeUsdc = feeUsd; // 1 USDC = $1
+  const totalEth = feeEth * mintCount;
+  const totalUsd = feeUsd * mintCount;
+
+  // MetaMask settings (EIP-1559)
+  const baseFee = state.gasData.standard || (gasPrice * 0.6);
+  const priorityFee = Math.max(gasPrice - baseFee, 1.5).toFixed(1);
+  const maxFee = (gasPrice * 1.2).toFixed(1);
+
+  // Show results
+  document.getElementById('r-eth').textContent = feeEth.toFixed(5) + ' ETH';
+  document.getElementById('r-eth-sub').textContent = 'per 1 mint';
+  document.getElementById('r-usd').textContent = '$' + feeUsd.toFixed(2);
+  document.getElementById('r-usdc').textContent = feeUsdc.toFixed(2) + ' USDC';
+  document.getElementById('r-gwei').textContent = gasPrice + ' Gwei';
+  document.getElementById('r-speed-label').textContent = state.selectedSpeed + ' speed';
+  document.getElementById('r-limit').textContent = gasLimit.toLocaleString();
+  document.getElementById('r-total').textContent = totalEth.toFixed(5) + ' ETH';
+  document.getElementById('r-count-label').textContent = mintCount + ' mint(s) = $' + totalUsd.toFixed(2);
+
+  document.getElementById('r-maxfee').textContent = maxFee + ' Gwei';
+  document.getElementById('r-priority').textContent = priorityFee + ' Gwei';
+
+  // Copy row
+  const copyStr = `GasLimit:${gasLimit} | GasPrice:${gasPrice}Gwei | Fee:${feeEth.toFixed(5)}ETH ($${feeUsd.toFixed(2)}) | MaxFee:${maxFee}Gwei | Priority:${priorityFee}Gwei`;
+  document.getElementById('copyText').textContent = copyStr;
+
+  // Tips
+  let tipHtml = '';
+  if (gasPrice >= 60) {
+    tipHtml = `<div class="tip-box warn">⚠️ Gas ඉතා ඉහළයි! Gas war එකක් හෝ network congestion. Urgently mint කරන්නම ඕනෑ නම් proceed කරන්න.</div>`;
+  } else if (gasPrice <= 10) {
+    tipHtml = `<div class="tip-box">✅ Gas ඉතා අඩුයි! Slow mint සඳහා ideal. Time sensitive නැත්නම් දැන් mint කරන්න.</div>`;
+  } else {
+    tipHtml = `<div class="tip-box">✅ Gas reasonable range. Fast mint සඳහා suitable.</div>`;
+  }
+  document.getElementById('tip-area').innerHTML = tipHtml;
+
+  document.getElementById('results').classList.add('show');
+  document.getElementById('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function copySettings() {
+  const text = document.getElementById('copyText').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    document.getElementById('copyConfirm').textContent = '✅ Copied!';
+    setTimeout(() => document.getElementById('copyConfirm').textContent = '', 2000);
+  });
+}
+
+// Init
+window.onload = () => {
+  // Default gas limit read-only for selected category
+  document.getElementById('gasLimit').readOnly = true;
+  document.getElementById('gasLimit').style.opacity = '0.6';
+  fetchLiveData();
+};
+</script>
+
+</body>
+</html>
