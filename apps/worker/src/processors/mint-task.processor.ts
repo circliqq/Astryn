@@ -569,28 +569,48 @@ export async function executeMintTask(
     // One fast totalSupply() eth_call before spending any gas.
     // Uses the stage max supply already fetched from OpenSea during prep
     // (stageMaxSupply) — avoids a second maxSupply() contract call.
-    // If supply is already at max, abort all wallets with zero gas cost.
-    // Non-fatal if the contract doesn't expose totalSupply() — broadcast proceeds.
-    {
-      const contractAddress = task.collection.contractAddress as `0x${string}` | null;
-      const knownMaxSupply =
-        simulationVerified.find((s) => s.stageMaxSupply != null)?.stageMaxSupply ?? null;
+    // ── Pre-broadcast setup — runs in parallel, zero sequential delay ────
+    //
+    // Three things needed before wallets can fire:
+    //   1. Supply guard (one eth_call — abort if phase sold out)
+    //   2. Current block number (one eth_call — Flashbots bundle targeting)
+    //   3. Env vars (synchronous reads, hoisted here so they're not repeated
+    //      N times inside the per-wallet closure below)
+    //
+    // (1) and (2) are independent RPC calls — run them in parallel so we pay
+    // only max(supplyCheck, getBlockNumber) instead of their sum.
+    // Previously (2) was awaited serially inside each wallet's closure,
+    // adding one full RPC round-trip (~30-100ms) before every broadcast start.
+    const flashbotsAuthKey = process.env["ETH_FLASHBOTS_AUTH_KEY"] as Hex | undefined;
+    const buildersEnabled = /^(1|true|yes)$/i.test(process.env["ETH_BUILDERS_ENABLED"] ?? "");
+    const isEthereum = network === "ethereum";
 
-      const supplyGone = contractAddress
-        ? await checkSupplyBeforeBroadcast(client, contractAddress, knownMaxSupply, baselineTotalSupply)
-        : false;
+    const contractAddress = task.collection.contractAddress as `0x${string}` | null;
+    const knownMaxSupply =
+      simulationVerified.find((s) => s.stageMaxSupply != null)?.stageMaxSupply ?? null;
 
-      if (supplyGone) {
-        await log(
-          prisma,
-          task.id,
-          "warn",
-          "Supply exhausted at T=0 — aborting broadcast. No gas spent.",
-          { knownMaxSupply: knownMaxSupply?.toString() },
-        ).catch(() => undefined);
-        await finishTask(prisma, task.id, "FAILED", "Mint supply exhausted before broadcast. No gas spent.");
-        return;
-      }
+    const [supplyGone, currentBlockNumber] = await Promise.all([
+      // (1) Supply guard — abort with zero gas if phase is already sold out.
+      contractAddress
+        ? checkSupplyBeforeBroadcast(client, contractAddress, knownMaxSupply, baselineTotalSupply)
+        : Promise.resolve(false),
+      // (2) Block number — needed for Flashbots bundle block-targeting.
+      //     ETH only; skip entirely on Base (no bundle support).
+      isEthereum && flashbotsAuthKey
+        ? client.getBlockNumber().catch(() => null)
+        : Promise.resolve(null),
+    ]);
+
+    if (supplyGone) {
+      await log(
+        prisma,
+        task.id,
+        "warn",
+        "Supply exhausted at T=0 — aborting broadcast. No gas spent.",
+        { knownMaxSupply: knownMaxSupply?.toString() },
+      ).catch(() => undefined);
+      await finishTask(prisma, task.id, "FAILED", "Mint supply exhausted before broadcast. No gas spent.");
+      return;
     }
     // ─────────────────────────────────────────────────────────────────────
 
@@ -610,19 +630,6 @@ export async function executeMintTask(
             where: { id: preparedMint.taskWalletId },
             data: { status: "broadcasting", progress: 90 },
           }).catch(() => undefined);
-
-          // All broadcast targets run in parallel at T=0.
-          // Ethereum: RPC pool + Flashbots bundle (if key set) + free builders (if enabled).
-          // Base: RPC pool + fast public endpoints (always on, no auth needed).
-          const flashbotsAuthKey = process.env["ETH_FLASHBOTS_AUTH_KEY"] as Hex | undefined;
-          const buildersEnabled = /^(1|true|yes)$/i.test(process.env["ETH_BUILDERS_ENABLED"] ?? "");
-          const isEthereum = network === "ethereum";
-
-          // Fetch current block number for Flashbots bundle targeting.
-          // Non-blocking: if it fails we skip bundles gracefully.
-          const currentBlockNumber = isEthereum && flashbotsAuthKey
-            ? await client.getBlockNumber().catch(() => null)
-            : null;
 
           const [broadcasts] = await Promise.all([
             pool.broadcastUntilAccepted(network, preparedMint.signedTx),
@@ -1432,7 +1439,16 @@ async function waitWithRollingSimulation(
     preRefreshed = await refreshSignatures(prisma, mintTaskId, prepared, options);
   };
 
-  await Promise.all([sleepUntil(targetAt), pollLoop(), preRefreshLoop().catch(() => undefined)]);
+  // preRefreshLoop runs as fire-and-forget — it must NEVER be inside
+  // Promise.all with sleepUntil.  If refreshSignatures takes longer than
+  // refreshLeadMs (slow RPC, many wallets) it would block T=0 broadcast
+  // past the earlyMs window, defeating the entire early-broadcast optimisation.
+  //
+  //   finished in time  → preRefreshed is set, used at T=0 with zero delay
+  //   still running     → preRefreshed stays null, sequential fallback runs
+  //   threw             → same — falls back safely
+  void preRefreshLoop().catch(() => undefined);
+  await Promise.all([sleepUntil(targetAt), pollLoop()]);
   // ─────────────────────────────────────────────────────────────────────
 
   // ── Re-sign with fresh nonce (T=0) ───────────────────────────────────
@@ -1794,8 +1810,14 @@ async function sendFlashbotsBundle(
 
   // eth_sendBundle targets a SPECIFIC block — guaranteed inclusion attempt
   // in that block rather than "whenever" with eth_sendPrivateTransaction.
-  // We target currentBlock+1 (next block) and also currentBlock+2 as fallback
-  // by sending two bundles in parallel.
+  // We target currentBlock+1, N+2, N+3 in parallel for maximum coverage.
+  //
+  // Auth account is derived ONCE here — previously it was derived inside
+  // sendBundle() which meant 3 redundant derivations per call.
+  // privateKeyToAccount is synchronous but still burns CPU cycles;
+  // more importantly it keeps the hot path clean.
+  const account = privateKeyToAccount(authKey);
+
   const sendBundle = async (blockNumber: bigint) => {
     const body = JSON.stringify({
       jsonrpc: "2.0",
@@ -1809,7 +1831,6 @@ async function sendFlashbotsBundle(
       ],
     });
 
-    const account = privateKeyToAccount(authKey);
     const sig = await account.signMessage({
       message: { raw: keccak256(toBytes(body)) },
     });

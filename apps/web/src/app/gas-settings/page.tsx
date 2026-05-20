@@ -86,7 +86,7 @@ export default function GasSettingsPage() {
           <div className="metric-card">
             <p className="label-caps">Mode</p>
             <div className="mt-3 flex items-center justify-between">
-              <p className="text-[18px] font-semibold capitalize text-graphite-100">{settings.mode}</p>
+              <p className="text-[18px] font-semibold capitalize" style={{ color: "var(--text-1)" }}>{settings.mode}</p>
               <Badge tone={MODE_TONE[settings.mode]}>{settings.mode}</Badge>
             </div>
           </div>
@@ -99,10 +99,10 @@ export default function GasSettingsPage() {
           <Panel>
             <div className="panel-header">
               <div>
-                <p className="text-[14px] font-semibold text-graphite-100">Execution Gas Profile</p>
-                <p className="mt-0.5 text-[12px] text-graphite-500">Flat, explicit controls for mint and wallet execution.</p>
+                <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Execution Gas Profile</p>
+                <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>Flat, explicit controls for mint and wallet execution.</p>
               </div>
-              <Fuel size={18} className="text-graphite-500" />
+              <Fuel size={18} style={{ color: "var(--text-3)" }} />
             </div>
             <div className="space-y-5 p-5">
               <div className="segmented-control">
@@ -115,27 +115,30 @@ export default function GasSettingsPage() {
 
               <div className="grid gap-4 md:grid-cols-2">
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Max fee (gwei)</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Max fee (gwei)</span>
                   <Input type="number" min="0" value={settings.maxFeeGwei} onChange={(event) => updateNumber("maxFeeGwei", event.target.value)} />
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Priority fee (gwei)</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Priority fee (gwei)</span>
                   <Input type="number" min="0" value={settings.priorityFeeGwei} onChange={(event) => updateNumber("priorityFeeGwei", event.target.value)} />
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Gas cap per wallet (ETH)</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Gas cap per wallet (ETH)</span>
                   <Input type="number" min="0" step="any" value={settings.maxTotalGasCostEth} onChange={(event) => updateNumber("maxTotalGasCostEth", event.target.value)} />
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Max bump attempts</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Max bump attempts</span>
                   <Input type="number" min="1" value={settings.maxBumpAttempts} onChange={(event) => updateNumber("maxBumpAttempts", event.target.value)} />
                 </label>
               </div>
 
-              <label className="flex items-center justify-between rounded-md border border-graphite-700 bg-graphite-800 px-3 py-3">
+              <label
+                className="flex items-center justify-between rounded-md px-3 py-3"
+                style={{ border: "1px solid var(--border)", background: "var(--surface-2)" }}
+              >
                 <span>
-                  <span className="block text-[13px] font-medium text-graphite-100">Gas bump</span>
-                  <span className="block text-[12px] text-graphite-500">Raise fees when transactions stall.</span>
+                  <span className="block text-[13px] font-medium" style={{ color: "var(--text-1)" }}>Gas bump</span>
+                  <span className="block text-[12px]" style={{ color: "var(--text-3)" }}>Raise fees when transactions stall.</span>
                 </span>
                 <input
                   type="checkbox"
@@ -154,11 +157,11 @@ export default function GasSettingsPage() {
           <div className="space-y-5">
             <Panel>
               <div className="panel-header">
-                <p className="text-[14px] font-semibold text-graphite-100">Live Network</p>
+                <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Live Network</p>
               </div>
               <div className="space-y-4 p-5">
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Network</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Network</span>
                   <Select value={network} onChange={(event) => setNetwork(event.target.value as "base" | "ethereum")}>
                     <option value="base">Base</option>
                     <option value="ethereum">Ethereum</option>
@@ -172,14 +175,14 @@ export default function GasSettingsPage() {
 
             <Panel>
               <div className="panel-header">
-                <p className="text-[14px] font-semibold text-graphite-100">Cost Estimate</p>
+                <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Cost Estimate</p>
               </div>
               <div className="space-y-3 p-5 text-[13px]">
-                <div className="flex justify-between"><span className="text-graphite-500">Estimated gas</span><span>{recommendation ? recommendation.estimatedGasCostEth.toFixed(6) : "-"} ETH</span></div>
-                <div className="flex justify-between"><span className="text-graphite-500">Max per wallet</span><span>{settings.maxTotalGasCostEth} ETH</span></div>
-                <div className="flex justify-between"><span className="text-graphite-500">Wallet count</span><span>{wallets.length}</span></div>
-                <div className="border-t border-graphite-700 pt-3">
-                  <div className="flex justify-between font-semibold text-graphite-100">
+                <div className="flex justify-between"><span style={{ color: "var(--text-3)" }}>Estimated gas</span><span>{recommendation ? recommendation.estimatedGasCostEth.toFixed(6) : "-"} ETH</span></div>
+                <div className="flex justify-between"><span style={{ color: "var(--text-3)" }}>Max per wallet</span><span>{settings.maxTotalGasCostEth} ETH</span></div>
+                <div className="flex justify-between"><span style={{ color: "var(--text-3)" }}>Wallet count</span><span>{wallets.length}</span></div>
+                <div className="pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+                  <div className="flex justify-between font-semibold" style={{ color: "var(--text-1)" }}>
                     <span>Total estimate</span>
                     <span>{recommendation ? recommendation.totalGasCostEth.toFixed(6) : "-"} ETH</span>
                   </div>

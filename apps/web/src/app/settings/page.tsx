@@ -47,18 +47,18 @@ export default function SettingsPage() {
             <Panel>
               <div className="panel-header">
                 <div>
-                  <p className="text-[14px] font-semibold text-graphite-100">Profile</p>
-                  <p className="mt-0.5 text-[12px] text-graphite-500">Local console identity and display preferences.</p>
+                  <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Profile</p>
+                  <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>Local console identity and display preferences.</p>
                 </div>
-                <Settings2 size={17} className="text-graphite-500" />
+                <Settings2 size={17} style={{ color: "var(--text-3)" }} />
               </div>
               <div className="grid gap-4 p-5 md:grid-cols-2">
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Display name</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-2)" }}>Display name</span>
                   <Input value={settings.profile.displayName} onChange={(event) => updateSection("profile", { displayName: event.target.value })} />
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Theme</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-2)" }}>Theme</span>
                   <Select value={settings.appearance.themeMode} onChange={(event) => updateSection("appearance", { themeMode: event.target.value as ThemeMode })}>
                     <option value="dark">Dark</option>
                     <option value="light">Light</option>
@@ -66,7 +66,7 @@ export default function SettingsPage() {
                   </Select>
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Timezone</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-2)" }}>Timezone</span>
                   <Select
                     value={settings.appearance.timezone ?? "UTC"}
                     onChange={(event) => updateSection("appearance", { timezone: event.target.value })}
@@ -101,7 +101,7 @@ export default function SettingsPage() {
                       <option value="Pacific/Auckland">NZST — Auckland</option>
                     </optgroup>
                   </Select>
-                  <p className="mt-1 text-[10px] text-graphite-500">Controls all phase times and the header clock.</p>
+                  <p className="mt-1 text-[10px]" style={{ color: "var(--text-3)" }}>Controls all phase times and the header clock.</p>
                 </label>
                 <ToggleRow
                   label="Compact mode"
@@ -115,8 +115,8 @@ export default function SettingsPage() {
             <Panel>
               <div className="panel-header">
                 <div>
-                  <p className="text-[14px] font-semibold text-graphite-100">Notification Defaults</p>
-                  <p className="mt-0.5 text-[12px] text-graphite-500">Local preferences for console-level alert surfaces.</p>
+                  <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Notification Defaults</p>
+                  <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>Local preferences for console-level alert surfaces.</p>
                 </div>
                 <Badge tone="neutral">Local</Badge>
               </div>
@@ -133,14 +133,14 @@ export default function SettingsPage() {
             <Panel>
               <div className="panel-header">
                 <div>
-                  <p className="text-[14px] font-semibold text-graphite-100">Auto-Consolidation</p>
-                  <p className="mt-0.5 text-[12px] text-graphite-500">Default sweep behavior for newly minted NFTs.</p>
+                  <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Auto-Consolidation</p>
+                  <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>Default sweep behavior for newly minted NFTs.</p>
                 </div>
               </div>
               <div className="space-y-4 p-5">
                 <ToggleRow label="Enable by default" detail="Prefer cold-wallet sweeps after mints." checked={settings.autoConsolidation.enabled} onChange={(checked) => updateSection("autoConsolidation", { enabled: checked })} />
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Cold wallet address</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-2)" }}>Cold wallet address</span>
                   <Input value={settings.autoConsolidation.coldWalletAddress} onChange={(event) => updateSection("autoConsolidation", { coldWalletAddress: event.target.value })} placeholder="0x..." />
                 </label>
                 <ToggleRow label="Only after confirmed mint" detail="Wait for transaction confirmation." checked={settings.autoConsolidation.onlyAfterConfirmedMint} onChange={(checked) => updateSection("autoConsolidation", { onlyAfterConfirmedMint: checked })} />
@@ -150,10 +150,10 @@ export default function SettingsPage() {
             <Panel>
               <div className="panel-header">
                 <div>
-                  <p className="text-[14px] font-semibold text-graphite-100">Privacy</p>
-                  <p className="mt-0.5 text-[12px] text-graphite-500">Reduce sensitive details on shared screens.</p>
+                  <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Privacy</p>
+                  <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>Reduce sensitive details on shared screens.</p>
                 </div>
-                <Shield size={17} className="text-graphite-500" />
+                <Shield size={17} style={{ color: "var(--text-3)" }} />
               </div>
               <div className="space-y-3 p-5">
                 <ToggleRow label="Hide wallet addresses" detail="Mask full addresses by default." checked={settings.privacy.hideWalletAddresses} onChange={(checked) => updateSection("privacy", { hideWalletAddresses: checked })} />
@@ -184,10 +184,13 @@ function ToggleRow({
   onChange: (checked: boolean) => void;
 }) {
   return (
-    <label className="flex items-center justify-between gap-4 rounded-md border border-graphite-700 bg-graphite-800 px-3 py-3">
+    <label
+      className="flex items-center justify-between gap-4 rounded-[6px] border px-3 py-3 transition-colors"
+      style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}
+    >
       <span>
-        <span className="block text-[13px] font-medium text-graphite-100">{label}</span>
-        <span className="block text-[12px] text-graphite-500">{detail}</span>
+        <span className="block text-[13px] font-medium" style={{ color: "var(--text-1)" }}>{label}</span>
+        <span className="block text-[12px]" style={{ color: "var(--text-3)" }}>{detail}</span>
       </span>
       <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
     </label>

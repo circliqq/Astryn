@@ -55,7 +55,14 @@ function LiveClock() {
 
   if (!time) return null;
   return (
-    <span className="hidden items-center gap-1.5 rounded-md border border-graphite-700 bg-graphite-800 px-2.5 py-1 font-mono text-[12px] font-medium text-graphite-100 md:flex">
+    <span
+      className="hidden items-center gap-1.5 rounded-[6px] border px-2.5 py-1 font-mono text-[12px] font-semibold md:flex"
+      style={{
+        background: "var(--surface-2)",
+        borderColor: "var(--border)",
+        color: "var(--text-1)",
+      }}
+    >
       {time}
     </span>
   );
@@ -86,34 +93,41 @@ function LiveStatusBar() {
   const allRpcOk     = rpc.length > 0 && healthyRpc === rpc.length;
   const someRpcBad   = rpc.length > 0 && healthyRpc < rpc.length;
   const rawGwei      = gas ? Number(BigInt(gas.baseFeePerGas)) / 1e9 : null;
-  // Use 3 decimal places at low gas (<1 gwei), 1 decimal place otherwise
   const baseFeeGwei  = rawGwei !== null
     ? rawGwei < 1 ? rawGwei.toFixed(3) : rawGwei.toFixed(1)
     : null;
-  const gasHigh      = rawGwei !== null && rawGwei >= 50;
-  const gasMid       = rawGwei !== null && rawGwei >= 10 && !gasHigh;
+  const gasHigh = rawGwei !== null && rawGwei >= 50;
+  const gasMid  = rawGwei !== null && rawGwei >= 10 && !gasHigh;
 
   return (
-    <div className="hidden items-center gap-4 text-[12px] text-graphite-400 md:flex">
+    <div className="hidden items-center gap-3 text-[11.5px] md:flex" style={{ color: "var(--text-3)" }}>
       {rpc.length > 0 && (
-        <span className="flex items-center gap-1.5">
+        <span
+          className="flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-1)" }}
+        >
           <Dot tone={allRpcOk ? "green" : someRpcBad ? "yellow" : "muted"} />
           RPC {healthyRpc}/{rpc.length}
         </span>
       )}
       {readyPct !== null && (
-        <span className="flex items-center gap-1.5">
+        <span
+          className="flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-1)" }}
+        >
           <Dot tone={readyPct >= 80 ? "green" : readyPct >= 50 ? "yellow" : "red"} />
           Wallets {readyPct}%
         </span>
       )}
       {baseFeeGwei !== null && (
-        <span className="flex items-center gap-1.5">
+        <span
+          className="flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-1)" }}
+        >
           <Dot tone={gasHigh ? "red" : gasMid ? "yellow" : "green"} />
-          Gas {baseFeeGwei} gwei
+          {baseFeeGwei} gwei
         </span>
       )}
-      <span className="h-3.5 w-px bg-graphite-700" />
     </div>
   );
 }
@@ -156,46 +170,69 @@ export function AppShell({ title, children }: { title: string; children: React.R
 
   if (authState !== "ready") {
     return (
-      <main className="grid min-h-screen place-items-center bg-graphite-950 px-4">
+      <main
+        className="grid min-h-screen place-items-center px-4"
+        style={{ background: "var(--bg)" }}
+      >
         <div className="panel w-full max-w-sm p-6 text-center">
-          <p className="text-[13px] font-medium text-graphite-100">
+          <p className="text-[13px] font-medium" style={{ color: "var(--text-1)" }}>
             {authState === "checking" ? "Checking session…" : "Unable to verify session."}
           </p>
-          {authError && <p className="mt-2 text-[12px] text-status-red-text">{authError}</p>}
+          {authError && (
+            <p className="mt-2 text-[12px] text-status-red-text">{authError}</p>
+          )}
         </div>
       </main>
     );
   }
 
   return (
-    <div className="flex min-h-screen bg-graphite-950">
+    <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg)" }}>
       <Sidebar />
       <MobileSidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-      <main className="min-w-0 flex-1">
-        <header className="sticky top-0 z-10 flex h-12 items-center justify-between border-b border-graphite-700 bg-graphite-950/95 px-4 backdrop-blur-[8px] md:px-5">
+      <main className="flex flex-1 flex-col min-w-0 overflow-hidden">
+        {/* Header */}
+        <header
+          className="h-12 shrink-0 flex items-center justify-between px-5 border-b"
+          style={{
+            background: "var(--surface)",
+            borderColor: "var(--border)",
+            boxShadow: "0 1px 0 var(--border), 0 1px 4px rgba(0,0,0,0.06)",
+          }}
+        >
           <div className="flex items-center gap-3">
             <Button
               type="button"
               variant="ghost"
-              className={cn("size-8 px-0 lg:hidden")}
+              className="size-8 px-0 lg:hidden"
               aria-label="Open navigation"
               onClick={() => setSidebarOpen(true)}
             >
               <Menu size={16} />
             </Button>
-            <h1 className="text-[15px] font-semibold tracking-[-0.01em] text-graphite-100">
-              {title}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1
+                className="text-[13px] font-semibold tracking-tight"
+                style={{ color: "var(--text-1)" }}
+              >
+                {title}
+              </h1>
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <LiveClock />
             <LiveStatusBar />
+            <span
+              className="h-4 w-px mx-1"
+              style={{ background: "var(--border)" }}
+            />
             <Button
               type="button"
               variant="ghost"
-              className="size-8 px-0 text-graphite-400"
+              className="size-8 px-0"
+              style={{ color: "var(--text-3)" }}
               aria-label="Logout"
               title="Logout"
               onClick={handleLogout}
@@ -206,7 +243,12 @@ export function AppShell({ title, children }: { title: string; children: React.R
           </div>
         </header>
 
-        <div className="mx-auto max-w-[1480px] p-4 md:p-5">{children}</div>
+        {/* Scrollable content area */}
+        <div className="flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-[1400px] p-5">
+            {children}
+          </div>
+        </div>
       </main>
     </div>
   );

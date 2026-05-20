@@ -93,7 +93,7 @@ function Countdown({ mintStartTime }: { mintStartTime: string }) {
 
   const isMintStarted = new Date(mintStartTime).getTime() <= Date.now();
   return (
-    <span className={isMintStarted ? "text-graphite-500" : "tabular-nums text-brand"}>
+    <span className={isMintStarted ? "" : "tabular-nums text-brand"} style={isMintStarted ? { color: "var(--text-3)" } : undefined}>
       {label}
     </span>
   );
@@ -127,13 +127,16 @@ function AlertRow({ alert }: { alert: MintAlert }) {
   const isMintStarted = new Date(alert.mintStartTime).getTime() <= Date.now();
 
   return (
-    <div className="flex flex-col gap-2 rounded-[8px] border border-graphite-700 bg-graphite-800/40 p-4">
+    <div
+      className="flex flex-col gap-2 rounded-[8px] border p-4"
+      style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}
+    >
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         {/* Left: info */}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-graphite-100">{alert.collectionName}</span>
-            <span className="font-mono text-[11px] text-graphite-500">{alert.collectionSlug}</span>
+            <span className="font-semibold" style={{ color: "var(--text-1)" }}>{alert.collectionName}</span>
+            <span className="font-mono text-[11px]" style={{ color: "var(--text-3)" }}>{alert.collectionSlug}</span>
             <Badge tone="blue">{alert.network === "ETHEREUM" ? "Ethereum" : "Base"}</Badge>
             <Badge tone={alert.enabled ? "green" : "slate"}>
               {alert.enabled ? "Active" : "Paused"}
@@ -142,12 +145,12 @@ function AlertRow({ alert }: { alert: MintAlert }) {
 
           {/* Mint time + countdown */}
           <div className="mt-1.5 flex flex-wrap items-center gap-3 text-[12px]">
-            <span className="text-graphite-400">
+            <span style={{ color: "var(--text-2)" }}>
               <Clock size={11} className="mr-1 inline" />
               {formatDateTime(alert.mintStartTime)}
             </span>
             {!isMintStarted && (
-              <span className="text-graphite-400">
+              <span style={{ color: "var(--text-2)" }}>
                 Starts in: <Countdown mintStartTime={alert.mintStartTime} />
               </span>
             )}
@@ -167,6 +170,7 @@ function AlertRow({ alert }: { alert: MintAlert }) {
                       ? "border-graphite-600 bg-graphite-700 text-graphite-400 line-through"
                       : "border-brand/30 bg-brand/10 text-brand"
                     }`}
+                  style={isFired ? { borderColor: "var(--border-2)", background: "var(--surface-3)", color: "var(--text-3)" } : undefined}
                 >
                   <Bell size={9} />
                   {label}
@@ -275,31 +279,32 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
         onClick={() => setOpen((o) => !o)}
       >
         <div className="flex items-center gap-3">
-          <div className="grid size-8 place-items-center rounded-md bg-graphite-800">
-            <Plus size={15} className="text-graphite-400" />
+          <div className="grid size-8 place-items-center rounded-md" style={{ background: "var(--surface-2)" }}>
+            <Plus size={15} style={{ color: "var(--text-2)" }} />
           </div>
           <div className="text-left">
-            <p className="text-[13px] font-semibold text-graphite-100">Add Mint Alert</p>
-            <p className="text-[12px] text-graphite-500">
+            <p className="text-[13px] font-semibold" style={{ color: "var(--text-1)" }}>Add Mint Alert</p>
+            <p className="text-[12px]" style={{ color: "var(--text-3)" }}>
               Get notified 1h, 30m, 15m, or 5m before a mint starts.
             </p>
           </div>
         </div>
         {open
-          ? <ChevronUp size={15} className="shrink-0 text-graphite-400" />
-          : <ChevronDown size={15} className="shrink-0 text-graphite-400" />}
+          ? <ChevronUp size={15} className="shrink-0" style={{ color: "var(--text-2)" }} />
+          : <ChevronDown size={15} className="shrink-0" style={{ color: "var(--text-2)" }} />}
       </button>
 
       {open && (
         <form
-          className="border-t border-graphite-700 px-4 pb-4 pt-4 space-y-4"
+          className="border-t px-4 pb-4 pt-4 space-y-4"
+          style={{ borderColor: "var(--border)" }}
           onSubmit={handleSubmit}
         >
           {/* Row 1: slug + name */}
           <div className="grid gap-3 md:grid-cols-2">
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">
-                Collection Slug <span className="text-graphite-600">(OpenSea slug)</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-2)" }}>
+                Collection Slug <span style={{ color: "var(--text-3)" }}>(OpenSea slug)</span>
               </span>
               <Input
                 placeholder="slug or opensea.io/collection/..."
@@ -308,8 +313,8 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
               />
             </label>
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">
-                Collection Name <span className="text-graphite-600">(display label)</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-2)" }}>
+                Collection Name <span style={{ color: "var(--text-3)" }}>(display label)</span>
               </span>
               <Input
                 placeholder="e.g. Project Ryujin"
@@ -322,7 +327,7 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
           {/* Row 2: network + mint time */}
           <div className="grid gap-3 md:grid-cols-2">
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">Network</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-2)" }}>Network</span>
               <Select
                 value={network}
                 onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM")}
@@ -332,7 +337,7 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
               </Select>
             </label>
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-2)" }}>
                 Mint Start Time
               </span>
               <Input
@@ -345,7 +350,7 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
 
           {/* Alert intervals */}
           <div>
-            <p className="mb-2 text-[11px] font-medium text-graphite-400">Alert me before mint</p>
+            <p className="mb-2 text-[11px] font-medium" style={{ color: "var(--text-2)" }}>Alert me before mint</p>
             <div className="flex flex-wrap gap-2">
               {ALERT_OPTIONS.map(({ minutes, label }) => {
                 const isOn = selected.includes(minutes);
@@ -354,11 +359,11 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
                     key={minutes}
                     type="button"
                     onClick={() => toggleInterval(minutes)}
-                    className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium transition-colors
-                      ${isOn
-                        ? "border-brand bg-brand/15 text-brand"
-                        : "border-graphite-600 bg-graphite-800 text-graphite-400 hover:border-graphite-500 hover:text-graphite-200"
-                      }`}
+                    className="flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium transition-colors"
+                    style={isOn
+                      ? { borderColor: "var(--brand)", background: "color-mix(in srgb, var(--brand) 15%, transparent)", color: "var(--brand)" }
+                      : { borderColor: "var(--border-2)", background: "var(--surface-2)", color: "var(--text-2)" }
+                    }
                   >
                     <Bell size={11} />
                     {label}
@@ -425,7 +430,7 @@ export function MintAlertsSection() {
       >
         <div className="flex items-center gap-2">
           <Bell size={15} className="text-brand" />
-          <h2 className="text-[14px] font-semibold text-graphite-100">Mint Alerts</h2>
+          <h2 className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Mint Alerts</h2>
           {alerts.length > 0 && (
             <span className="rounded-full bg-brand/15 px-2 py-0.5 text-[11px] font-medium text-brand">
               {upcoming.length} upcoming
@@ -433,8 +438,8 @@ export function MintAlertsSection() {
           )}
         </div>
         {sectionOpen
-          ? <ChevronUp size={14} className="text-graphite-500" />
-          : <ChevronDown size={14} className="text-graphite-500" />}
+          ? <ChevronUp size={14} style={{ color: "var(--text-3)" }} />
+          : <ChevronDown size={14} style={{ color: "var(--text-3)" }} />}
       </button>
 
       {sectionOpen && (
@@ -444,7 +449,7 @@ export function MintAlertsSection() {
 
           {/* Loading */}
           {isLoading && (
-            <Panel className="flex items-center gap-2 p-5 text-[13px] text-graphite-400">
+            <Panel className="flex items-center gap-2 p-5 text-[13px]" style={{ color: "var(--text-2)" }}>
               <Loader2 size={15} className="animate-spin" />
               Loading alerts…
             </Panel>
@@ -454,11 +459,11 @@ export function MintAlertsSection() {
           {!isLoading && alerts.length === 0 && (
             <Panel>
               <div className="flex flex-col items-center px-6 py-10 text-center">
-                <div className="grid size-[48px] place-items-center rounded-full bg-[#1E2028]">
-                  <Bell size={20} className="text-graphite-500" />
+                <div className="grid size-[48px] place-items-center rounded-full" style={{ background: "var(--surface-2)" }}>
+                  <Bell size={20} style={{ color: "var(--text-3)" }} />
                 </div>
-                <p className="mt-3 text-[13px] font-medium text-graphite-200">No mint alerts yet</p>
-                <p className="mt-1 text-[12px] text-graphite-500">
+                <p className="mt-3 text-[13px] font-medium" style={{ color: "var(--text-2)" }}>No mint alerts yet</p>
+                <p className="mt-1 text-[12px]" style={{ color: "var(--text-3)" }}>
                   Add an alert above and get notified before any mint starts.
                 </p>
               </div>
@@ -468,7 +473,7 @@ export function MintAlertsSection() {
           {/* Upcoming alerts */}
           {upcoming.length > 0 && (
             <div className="space-y-2">
-              <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-graphite-500">
+              <p className="px-1 text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-3)" }}>
                 Upcoming
               </p>
               {upcoming.map((alert) => (
@@ -480,7 +485,7 @@ export function MintAlertsSection() {
           {/* Past alerts */}
           {past.length > 0 && (
             <div className="space-y-2">
-              <p className="px-1 text-[11px] font-medium uppercase tracking-wide text-graphite-500">
+              <p className="px-1 text-[11px] font-medium uppercase tracking-wide" style={{ color: "var(--text-3)" }}>
                 Past / Completed
               </p>
               {past.map((alert) => (

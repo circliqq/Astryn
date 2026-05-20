@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Download, TrendingUp, TrendingDown, Minus, RefreshCw } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { StatusPill } from "@/components/status-pill";
-import { Button, Panel } from "@/components/ui";
+import { Button, Panel, Select } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 
 interface TaskSummary {
@@ -82,7 +82,7 @@ function PnlCard({ taskId }: { taskId: string }) {
   if (isLoading) {
     return (
       <Panel className="p-5">
-        <div className="flex items-center gap-2 text-[13px] text-graphite-400">
+        <div className="flex items-center gap-2 text-[13px]" style={{ color: "var(--text-3)" }}>
           <RefreshCw size={14} className="animate-spin" />
           Loading PnL…
         </div>
@@ -99,16 +99,16 @@ function PnlCard({ taskId }: { taskId: string }) {
 
   return (
     <Panel className="overflow-hidden">
-      <div className="flex items-center justify-between border-b border-graphite-700 px-5 py-3.5">
+      <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: "1px solid var(--border)" }}>
         <div className="flex items-center gap-2">
           {isProfit ? (
             <TrendingUp size={15} className="text-status-green-text" />
           ) : isLoss ? (
             <TrendingDown size={15} className="text-status-red-text" />
           ) : (
-            <Minus size={15} className="text-graphite-400" />
+            <Minus size={15} style={{ color: "var(--text-3)" }} />
           )}
-          <p className="text-[13px] font-semibold text-graphite-100">PnL Summary</p>
+          <p className="text-[13px] font-semibold" style={{ color: "var(--text-1)" }}>PnL Summary</p>
           {data.floorUnavailable && (
             <span className="rounded bg-status-yellow-bg px-1.5 py-0.5 text-[10px] font-medium text-status-yellow-text">
               Floor unavailable
@@ -118,45 +118,61 @@ function PnlCard({ taskId }: { taskId: string }) {
         <button
           onClick={() => refetch()}
           disabled={isRefetching}
-          className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px] text-graphite-400 hover:bg-graphite-800 hover:text-graphite-100 disabled:opacity-50 transition-colors"
+          className="flex items-center gap-1.5 rounded px-2 py-1 text-[11px] disabled:opacity-50 transition-colors"
+          style={{ color: "var(--text-3)" }}
         >
           <RefreshCw size={11} className={isRefetching ? "animate-spin" : ""} />
           Refresh
         </button>
       </div>
 
-      <div className="grid grid-cols-3 divide-x divide-graphite-700 border-b border-graphite-700">
-        <div className="p-5">
-          <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-graphite-500">Invested</p>
-          <p className="mt-2 font-mono text-[22px] font-semibold tabular-nums leading-none text-graphite-100">
+      <div className="grid grid-cols-3" style={{ borderBottom: "1px solid var(--border)" }}>
+        <div className="p-5" style={{ borderRight: "1px solid var(--border)" }}>
+          <p className="text-[11px] font-medium uppercase tracking-[0.04em]" style={{ color: "var(--text-3)" }}>Invested</p>
+          <p className="mt-2 font-mono text-[22px] font-semibold tabular-nums leading-none" style={{ color: "var(--text-1)" }}>
             {data.investedEth} ETH
           </p>
-          <p className="mt-1 font-mono text-[13px] tabular-nums text-graphite-400">${data.investedUsd}</p>
+          <p className="mt-1 font-mono text-[13px] tabular-nums" style={{ color: "var(--text-3)" }}>${data.investedUsd}</p>
         </div>
 
-        <div className="p-5">
-          <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-graphite-500">
+        <div className="p-5" style={{ borderRight: "1px solid var(--border)" }}>
+          <p className="text-[11px] font-medium uppercase tracking-[0.04em]" style={{ color: "var(--text-3)" }}>
             Current Value{data.floorUnavailable ? " (floor N/A)" : ""}
           </p>
-          <p className={`mt-2 font-mono text-[22px] font-semibold tabular-nums leading-none ${data.floorUnavailable ? "text-graphite-500" : "text-graphite-100"}`}>
+          <p
+            className="mt-2 font-mono text-[22px] font-semibold tabular-nums leading-none"
+            style={{ color: data.floorUnavailable ? "var(--text-3)" : "var(--text-1)" }}
+          >
             {data.floorUnavailable ? "—" : `${data.currentValueEth} ETH`}
           </p>
-          <p className="mt-1 font-mono text-[13px] tabular-nums text-graphite-400">
+          <p className="mt-1 font-mono text-[13px] tabular-nums" style={{ color: "var(--text-3)" }}>
             {data.floorUnavailable ? "—" : `$${data.currentValueUsd}`}
           </p>
         </div>
 
-        <div className={`p-5 ${isProfit ? "bg-status-green-bg" : isLoss ? "bg-status-red-bg" : "bg-graphite-900"}`}>
-          <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-graphite-500">Profit / Loss</p>
-          <p className={`mt-2 font-mono text-[22px] font-semibold tabular-nums leading-none ${isProfit ? "text-status-green-text" : isLoss ? "text-status-red-text" : "text-graphite-400"}`}>
+        <div
+          className={`p-5 ${isProfit ? "bg-status-green-bg" : isLoss ? "bg-status-red-bg" : ""}`}
+          style={!isProfit && !isLoss ? { background: "var(--surface)" } : {}}
+        >
+          <p className="text-[11px] font-medium uppercase tracking-[0.04em]" style={{ color: "var(--text-3)" }}>Profit / Loss</p>
+          <p
+            className={`mt-2 font-mono text-[22px] font-semibold tabular-nums leading-none ${isProfit ? "text-status-green-text" : isLoss ? "text-status-red-text" : ""}`}
+            style={!isProfit && !isLoss ? { color: "var(--text-3)" } : {}}
+          >
             {data.floorUnavailable ? "—" : `${sign}${data.pnlEth} ETH`}
           </p>
           <div className="mt-1 flex items-center gap-2">
-            <span className={`font-mono text-[13px] tabular-nums ${isProfit ? "text-status-green-text" : isLoss ? "text-status-red-text" : "text-graphite-400"}`}>
+            <span
+              className={`font-mono text-[13px] tabular-nums ${isProfit ? "text-status-green-text" : isLoss ? "text-status-red-text" : ""}`}
+              style={!isProfit && !isLoss ? { color: "var(--text-3)" } : {}}
+            >
               {data.floorUnavailable ? "—" : `${sign}$${data.pnlUsd}`}
             </span>
             {!data.floorUnavailable && (
-              <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${isProfit ? "bg-status-green-bg text-status-green-text" : isLoss ? "bg-status-red-bg text-status-red-text" : "bg-graphite-800 text-graphite-400"}`}>
+              <span
+                className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${isProfit ? "bg-status-green-bg text-status-green-text" : isLoss ? "bg-status-red-bg text-status-red-text" : ""}`}
+                style={!isProfit && !isLoss ? { background: "var(--surface-2)", color: "var(--text-3)" } : {}}
+              >
                 {sign}{pnl.toFixed(1)}%
               </span>
             )}
@@ -165,21 +181,21 @@ function PnlCard({ taskId }: { taskId: string }) {
       </div>
 
       <div className="flex flex-wrap gap-x-6 gap-y-1.5 px-5 py-3">
-        <span className="text-[12px] text-graphite-500">
-          Mint price <span className="font-mono text-graphite-300">{data.mintPriceEth} ETH</span>
+        <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
+          Mint price <span className="font-mono" style={{ color: "var(--text-2)" }}>{data.mintPriceEth} ETH</span>
         </span>
-        <span className="text-[12px] text-graphite-500">
-          Gas <span className="font-mono text-graphite-300">{data.gasEth} ETH</span>
+        <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
+          Gas <span className="font-mono" style={{ color: "var(--text-2)" }}>{data.gasEth} ETH</span>
         </span>
-        <span className="text-[12px] text-graphite-500">
-          Floor <span className="font-mono text-graphite-300">{data.floorUnavailable ? "N/A" : `${data.floorPriceEth} ETH`}</span>
+        <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
+          Floor <span className="font-mono" style={{ color: "var(--text-2)" }}>{data.floorUnavailable ? "N/A" : `${data.floorPriceEth} ETH`}</span>
         </span>
-        <span className="text-[12px] text-graphite-500">
-          Wallets <span className="font-mono text-graphite-300">{data.successfulMints} minted × {data.mintQuantity} qty</span>
+        <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
+          Wallets <span className="font-mono" style={{ color: "var(--text-2)" }}>{data.successfulMints} minted × {data.mintQuantity} qty</span>
         </span>
         {data.ethUsdPrice > 0 && (
-          <span className="text-[12px] text-graphite-500">
-            ETH/USD <span className="font-mono text-graphite-300">${data.ethUsdPrice.toLocaleString()}</span>
+          <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
+            ETH/USD <span className="font-mono" style={{ color: "var(--text-2)" }}>${data.ethUsdPrice.toLocaleString()}</span>
           </span>
         )}
       </div>
@@ -274,8 +290,7 @@ export default function ReportsPage() {
     <AppShell title="Post-Mint Report">
       <div className="space-y-5">
         <Panel className="p-4">
-          <select
-            className="h-8 w-full rounded-md border border-graphite-700 bg-graphite-800 px-3 text-[13px] text-graphite-100 focus:border-brand focus:outline-none"
+          <Select
             value={selectedId}
             onChange={(event) => setSelectedId(event.target.value)}
           >
@@ -285,20 +300,20 @@ export default function ReportsPage() {
                 {taskSummary.id.slice(0, 8)} — {taskSummary.collection?.name ?? "Unknown"} ({taskSummary.status})
               </option>
             ))}
-          </select>
+          </Select>
         </Panel>
 
-        {isLoading ? <p className="text-[13px] text-graphite-400">Loading report…</p> : null}
+        {isLoading ? <p className="text-[13px]" style={{ color: "var(--text-3)" }}>Loading report…</p> : null}
 
         {task ? (
           <>
             <Panel className="flex items-center justify-between p-5">
               <div>
                 <StatusPill status={task.status} />
-                <h2 className="mt-2 text-[15px] font-semibold text-graphite-100">
+                <h2 className="mt-2 text-[15px] font-semibold" style={{ color: "var(--text-1)" }}>
                   {task.collection?.name ?? "Unknown"} — {task.collection?.chain === "BASE" ? "Base" : "Ethereum"}
                 </h2>
-                <p className="mt-0.5 font-mono text-[11px] text-graphite-500">Task {task.id.slice(0, 8)}</p>
+                <p className="mt-0.5 font-mono text-[11px]" style={{ color: "var(--text-3)" }}>Task {task.id.slice(0, 8)}</p>
               </div>
               <a href={`${API}/api/reports/${task.id}/export-csv`} download>
                 <Button variant="secondary">
@@ -316,9 +331,9 @@ export default function ReportsPage() {
                 ["Avg Confirm Time", avgSec !== "-" ? `${avgSec} sec` : "-", ""],
               ].map(([label, value, sub]) => (
                 <Panel key={label} className="p-4">
-                  <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-graphite-500">{label}</p>
-                  <p className="mt-2 text-[28px] font-semibold tabular-nums leading-none text-graphite-100">{value}</p>
-                  {sub ? <p className="mt-1.5 text-[12px] text-graphite-500">{sub}</p> : null}
+                  <p className="text-[11px] font-medium uppercase tracking-[0.04em]" style={{ color: "var(--text-3)" }}>{label}</p>
+                  <p className="mt-2 text-[28px] font-semibold tabular-nums leading-none" style={{ color: "var(--text-1)" }}>{value}</p>
+                  {sub ? <p className="mt-1.5 text-[12px]" style={{ color: "var(--text-3)" }}>{sub}</p> : null}
                 </Panel>
               ))}
             </div>
@@ -327,8 +342,8 @@ export default function ReportsPage() {
 
             {walletRows.length > 0 ? (
               <Panel>
-                <div className="flex items-center justify-between border-b border-graphite-700 px-5 py-3.5">
-                  <p className="text-[13px] font-semibold text-graphite-100">Wallet Results</p>
+                <div className="flex items-center justify-between px-5 py-3.5" style={{ borderBottom: "1px solid var(--border)" }}>
+                  <p className="text-[13px] font-semibold" style={{ color: "var(--text-1)" }}>Wallet Results</p>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="data-table w-full min-w-[760px] text-left">
@@ -344,15 +359,15 @@ export default function ReportsPage() {
                         const wallet = walletMap.get(row.walletId);
                         return (
                           <tr key={row.id}>
-                            <td className="font-mono text-[11px] text-graphite-400" data-wallet-address>
+                            <td className="font-mono text-[11px]" style={{ color: "var(--text-3)" }} data-wallet-address>
                               {wallet?.address ?? row.walletId.slice(0, 12)}
                             </td>
                             <td>
                               <StatusPill status={row.status} />
                             </td>
-                            <td className="font-mono text-[11px] text-graphite-400">{row.txHash ?? "—"}</td>
+                            <td className="font-mono text-[11px]" style={{ color: "var(--text-3)" }}>{row.txHash ?? "—"}</td>
                             <td className="tabular-nums">{formatEth(row.gasFeeWei)}</td>
-                            <td className="text-[12px] text-graphite-400">{row.error ?? "—"}</td>
+                            <td className="text-[12px]" style={{ color: "var(--text-3)" }}>{row.error ?? "—"}</td>
                           </tr>
                         );
                       })}
@@ -367,11 +382,11 @@ export default function ReportsPage() {
         {!selectedId ? (
           <Panel>
             <div className="flex flex-col items-center px-6 py-12 text-center">
-              <div className="grid size-[52px] place-items-center rounded-full bg-[#1E2028]">
-                <Download size={24} className="text-graphite-500" />
+              <div className="grid size-[52px] place-items-center rounded-full" style={{ background: "var(--surface-2)" }}>
+                <Download size={24} style={{ color: "var(--text-3)" }} />
               </div>
-              <p className="mt-3 text-[13px] font-medium text-graphite-200">No task selected</p>
-              <p className="mt-1 text-[12px] text-graphite-500">Select a completed task above to view its post-mint report.</p>
+              <p className="mt-3 text-[13px] font-medium" style={{ color: "var(--text-2)" }}>No task selected</p>
+              <p className="mt-1 text-[12px]" style={{ color: "var(--text-3)" }}>Select a completed task above to view its post-mint report.</p>
             </div>
           </Panel>
         ) : null}

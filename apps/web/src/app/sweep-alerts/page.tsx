@@ -162,27 +162,29 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
         onClick={() => setOpen((o) => !o)}
       >
         <div className="flex items-center gap-3">
-          <div className="grid size-8 place-items-center rounded-md bg-graphite-800">
+          <div className="grid size-8 place-items-center rounded-md" style={{ background: "var(--surface-2)" }}>
             <Users size={15} className="text-brand" />
           </div>
           <div className="text-left">
-            <p className="text-[14px] font-semibold text-graphite-100">
+            <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>
               Import from OpenSea Profile
             </p>
-            <p className="text-[12px] text-graphite-500">
+            <p className="text-[12px]" style={{ color: "var(--text-3)" }}>
               Paste a profile URL, username or wallet — pick which collections to track.
             </p>
           </div>
         </div>
-        {open ? <ChevronUp size={16} className="text-graphite-400 shrink-0" /> : <ChevronDown size={16} className="text-graphite-400 shrink-0" />}
+        {open
+          ? <ChevronUp size={16} className="shrink-0" style={{ color: "var(--text-3)" }} />
+          : <ChevronDown size={16} className="shrink-0" style={{ color: "var(--text-3)" }} />}
       </button>
 
       {open && (
-        <div className="border-t border-graphite-700 px-5 pb-5 pt-4 space-y-4">
+        <div className="border-t px-5 pb-5 pt-4 space-y-4" style={{ borderColor: "var(--border)" }}>
           {/* Input row */}
           <div className="grid gap-3 md:grid-cols-[1fr_160px_120px_120px_auto]">
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>
                 OpenSea URL / username / address
               </span>
               <Input
@@ -192,18 +194,18 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
               />
             </label>
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">Network</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Network</span>
               <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM")}>
                 <option value="ETHEREUM">Ethereum</option>
                 <option value="BASE">Base</option>
               </Select>
             </label>
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">Min items</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Min items</span>
               <Input type="number" min="2" max="200" value={minItems} onChange={(e) => setMinItems(e.target.value)} />
             </label>
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">Window</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Window</span>
               <Select value={windowSeconds} onChange={(e) => setWindowSeconds(e.target.value)}>
                 <option value="30">30s</option>
                 <option value="60">60s</option>
@@ -234,9 +236,9 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
           {profileResult && (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="text-[12px] text-graphite-400">
-                  Found <strong className="text-graphite-200">{profileResult.collectionCount}</strong> collections
-                  for <span className="font-mono text-graphite-300">{profileResult.walletAddress.slice(0, 10)}…</span>
+                <div className="text-[12px]" style={{ color: "var(--text-3)" }}>
+                  Found <strong style={{ color: "var(--text-2)" }}>{profileResult.collectionCount}</strong> collections
+                  for <span className="font-mono" style={{ color: "var(--text-2)" }}>{profileResult.walletAddress.slice(0, 10)}…</span>
                   {" · "}
                   <button
                     type="button"
@@ -248,7 +250,7 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
                       : "Select all new"}
                   </button>
                   {" · "}
-                  <span className="text-graphite-300">{selected.size} selected</span>
+                  <span style={{ color: "var(--text-2)" }}>{selected.size} selected</span>
                 </div>
                 <Input
                   placeholder="Filter collections…"
@@ -258,11 +260,11 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
                 />
               </div>
 
-              <div className="max-h-72 overflow-y-auto rounded-md border border-graphite-700">
+              <div className="max-h-72 overflow-y-auto rounded-md border" style={{ borderColor: "var(--border)" }}>
                 {filtered.length === 0 ? (
-                  <p className="p-4 text-center text-[12px] text-graphite-500">No collections match.</p>
+                  <p className="p-4 text-center text-[12px]" style={{ color: "var(--text-3)" }}>No collections match.</p>
                 ) : (
-                  <div className="divide-y divide-graphite-700">
+                  <div className="divide-y" style={{ borderColor: "var(--border)" }}>
                     {filtered.map((col) => {
                       const alreadyTracked = existingSlugs.has(col.slug);
                       const isSelected = selected.has(col.slug);
@@ -270,7 +272,8 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
                         <label
                           key={col.slug}
                           className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors
-                            ${alreadyTracked ? "opacity-50 cursor-not-allowed" : "hover:bg-graphite-800/60"}`}
+                            ${alreadyTracked ? "opacity-50 cursor-not-allowed" : ""}`}
+                          style={!alreadyTracked ? undefined : undefined}
                         >
                           <input
                             type="checkbox"
@@ -290,21 +293,22 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
                             <img
                               src={col.imageUrl}
                               alt={col.name}
-                              className="size-8 rounded-md object-cover border border-graphite-700"
+                              className="size-8 rounded-md object-cover border"
+                              style={{ borderColor: "var(--border)" }}
                             />
                           ) : (
-                            <div className="size-8 rounded-md bg-graphite-700" />
+                            <div className="size-8 rounded-md" style={{ background: "var(--surface-3)" }} />
                           )}
                           <div className="min-w-0 flex-1">
-                            <p className="truncate text-[13px] font-medium text-graphite-100">{col.name}</p>
-                            <p className="text-[11px] text-graphite-500">{col.slug}</p>
+                            <p className="truncate text-[13px] font-medium" style={{ color: "var(--text-1)" }}>{col.name}</p>
+                            <p className="text-[11px]" style={{ color: "var(--text-3)" }}>{col.slug}</p>
                           </div>
                           <div className="flex items-center gap-2 shrink-0">
                             {col.ownedCount != null && (
-                              <span className="text-[11px] text-graphite-400">{col.ownedCount} held</span>
+                              <span className="text-[11px]" style={{ color: "var(--text-3)" }}>{col.ownedCount} held</span>
                             )}
                             {alreadyTracked && (
-                              <Badge tone="green" >Tracked</Badge>
+                              <Badge tone="green">Tracked</Badge>
                             )}
                           </div>
                         </label>
@@ -329,7 +333,7 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
                     ? <><Loader2 size={14} className="animate-spin" /> Creating…</>
                     : <><Plus size={14} /> Create {selected.size} alert{selected.size !== 1 ? "s" : ""}</>}
                 </Button>
-                <span className="text-[12px] text-graphite-500">
+                <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
                   Each alert: {minItems}+ items swept in {windowLabel(Number(windowSeconds))}
                 </span>
               </div>
@@ -378,37 +382,39 @@ function CreateAlertForm({ onCreated }: { onCreated: () => void }) {
         onClick={() => setOpen((o) => !o)}
       >
         <div className="flex items-center gap-3">
-          <div className="grid size-8 place-items-center rounded-md bg-graphite-800">
-            <Plus size={15} className="text-graphite-400" />
+          <div className="grid size-8 place-items-center rounded-md" style={{ background: "var(--surface-2)" }}>
+            <Plus size={15} style={{ color: "var(--text-3)" }} />
           </div>
           <div className="text-left">
-            <p className="text-[14px] font-semibold text-graphite-100">Add Single Alert</p>
-            <p className="text-[12px] text-graphite-500">Track one collection by slug.</p>
+            <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Add Single Alert</p>
+            <p className="text-[12px]" style={{ color: "var(--text-3)" }}>Track one collection by slug.</p>
           </div>
         </div>
-        {open ? <ChevronUp size={16} className="text-graphite-400 shrink-0" /> : <ChevronDown size={16} className="text-graphite-400 shrink-0" />}
+        {open
+          ? <ChevronUp size={16} className="shrink-0" style={{ color: "var(--text-3)" }} />
+          : <ChevronDown size={16} className="shrink-0" style={{ color: "var(--text-3)" }} />}
       </button>
 
       {open && (
-        <div className="border-t border-graphite-700 px-5 pb-5 pt-4">
+        <div className="border-t px-5 pb-5 pt-4" style={{ borderColor: "var(--border)" }}>
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <label className="xl:col-span-2">
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">Collection slug</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Collection slug</span>
               <Input placeholder="e.g. projectryujin" value={slug} onChange={(e) => setSlug(e.target.value)} />
             </label>
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">Network</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Network</span>
               <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM")}>
                 <option value="ETHEREUM">Ethereum</option>
                 <option value="BASE">Base</option>
               </Select>
             </label>
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">Min items</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Min items</span>
               <Input type="number" min="2" max="200" value={minItems} onChange={(e) => setMinItems(e.target.value)} />
             </label>
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">Window</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Window</span>
               <Select value={windowSeconds} onChange={(e) => setWindowSeconds(e.target.value)}>
                 <option value="30">30s</option>
                 <option value="60">60s</option>
@@ -484,18 +490,19 @@ function AlertCard({ alert, onRefresh }: { alert: SweepAlert; onRefresh: () => v
               href={`https://opensea.io/collection/${alert.collectionSlug}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1 font-semibold text-graphite-100 hover:text-brand"
+              className="flex items-center gap-1 font-semibold hover:text-brand"
+              style={{ color: "var(--text-1)" }}
             >
               {alert.collectionSlug}
-              <ExternalLink size={11} className="text-graphite-500" />
+              <ExternalLink size={11} style={{ color: "var(--text-3)" }} />
             </a>
             <Badge tone="blue">{alert.network === "ETHEREUM" ? "Ethereum" : "Base"}</Badge>
             <Badge tone={alert.enabled ? "green" : "slate"}>{alert.enabled ? "Active" : "Paused"}</Badge>
           </div>
-          <div className="mt-2 flex flex-wrap gap-4 text-[12px] text-graphite-400">
+          <div className="mt-2 flex flex-wrap gap-4 text-[12px]" style={{ color: "var(--text-3)" }}>
             <span>
-              Trigger: <strong className="text-graphite-200">{alert.minItems}+ items</strong> in{" "}
-              <strong className="text-graphite-200">{windowLabel(alert.windowSeconds)}</strong>
+              Trigger: <strong style={{ color: "var(--text-2)" }}>{alert.minItems}+ items</strong> in{" "}
+              <strong style={{ color: "var(--text-2)" }}>{windowLabel(alert.windowSeconds)}</strong>
             </span>
             <span>{alert.detections.length > 0 ? `${alert.detections.length} detection${alert.detections.length !== 1 ? "s" : ""}` : "No detections yet"}</span>
             {alert.lastTriggeredAt && <span>Last hit: {timeAgo(alert.lastTriggeredAt)}</span>}
@@ -504,14 +511,18 @@ function AlertCard({ alert, onRefresh }: { alert: SweepAlert; onRefresh: () => v
           {alert.detections.length > 0 && (
             <div className="mt-3 space-y-1.5">
               {alert.detections.map((d) => (
-                <div key={d.id} className="flex items-center gap-3 rounded-md border border-graphite-700 bg-graphite-800/50 px-3 py-1.5 text-[11px]">
+                <div
+                  key={d.id}
+                  className="flex items-center gap-3 rounded-md border px-3 py-1.5 text-[11px]"
+                  style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}
+                >
                   <AlertTriangle size={11} className="text-amber-400 shrink-0" />
                   <span className="text-amber-300 font-medium">{d.itemCount} items swept</span>
-                  <span className="text-graphite-400">in {d.windowSeconds}s window</span>
+                  <span style={{ color: "var(--text-3)" }}>in {d.windowSeconds}s window</span>
                   {d.salePricesJson && d.salePricesJson.length > 0 && (
-                    <span className="text-graphite-400">@ {minMaxEth(d.salePricesJson)}</span>
+                    <span style={{ color: "var(--text-3)" }}>@ {minMaxEth(d.salePricesJson)}</span>
                   )}
-                  <span className="ml-auto text-graphite-500">{timeAgo(d.detectedAt)}</span>
+                  <span className="ml-auto" style={{ color: "var(--text-3)" }}>{timeAgo(d.detectedAt)}</span>
                 </div>
               ))}
             </div>
@@ -585,7 +596,7 @@ export default function SweepAlertsPage() {
 
         {/* ── Alert list ── */}
         {isLoading && (
-          <Panel className="p-8 text-center text-sm text-graphite-400">
+          <Panel className="p-8 text-center text-sm" style={{ color: "var(--text-3)" }}>
             <Loader2 size={20} className="mx-auto mb-3 animate-spin" />
             Loading alerts…
           </Panel>
@@ -594,11 +605,11 @@ export default function SweepAlertsPage() {
         {!isLoading && alerts.length === 0 && (
           <Panel>
             <div className="flex flex-col items-center px-6 py-12 text-center">
-              <div className="grid size-[52px] place-items-center rounded-full bg-[#1E2028]">
-                <TrendingDown size={24} className="text-graphite-500" />
+              <div className="grid size-[52px] place-items-center rounded-full" style={{ background: "var(--surface-2)" }}>
+                <TrendingDown size={24} style={{ color: "var(--text-3)" }} />
               </div>
-              <p className="mt-3 text-[13px] font-medium text-graphite-200">No sweep alerts yet</p>
-              <p className="mt-1 text-[12px] text-graphite-500">
+              <p className="mt-3 text-[13px] font-medium" style={{ color: "var(--text-2)" }}>No sweep alerts yet</p>
+              <p className="mt-1 text-[12px]" style={{ color: "var(--text-3)" }}>
                 Import from a profile above or add a collection slug manually.
               </p>
             </div>

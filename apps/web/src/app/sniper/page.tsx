@@ -153,8 +153,8 @@ export default function SniperPage() {
         <Panel>
           <div className="panel-header">
             <div>
-              <p className="text-[14px] font-semibold text-graphite-100">Trading Watches</p>
-              <p className="mt-0.5 text-[12px] text-graphite-500">Clean strategy list for price and rarity triggers.</p>
+              <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Trading Watches</p>
+              <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>Clean strategy list for price and rarity triggers.</p>
             </div>
             <Button type="button" onClick={() => setShowForm(true)}>
               <Plus size={14} /> New Sniper
@@ -166,9 +166,9 @@ export default function SniperPage() {
           ) : tasks.length === 0 ? (
             <div className="empty-state">
               <div>
-                <Crosshair size={28} className="mx-auto text-graphite-500" />
-                <p className="mt-3 font-medium text-graphite-200">No sniper tasks yet</p>
-                <p className="mt-1 text-[12px] text-graphite-500">Create a watch for underpriced or rare listings.</p>
+                <Crosshair size={28} className="mx-auto" style={{ color: "var(--text-3)" }} />
+                <p className="mt-3 font-medium" style={{ color: "var(--text-2)" }}>No sniper tasks yet</p>
+                <p className="mt-1 text-[12px]" style={{ color: "var(--text-3)" }}>Create a watch for underpriced or rare listings.</p>
               </div>
             </div>
           ) : (
@@ -193,8 +193,8 @@ export default function SniperPage() {
                     return (
                       <tr key={task.id}>
                         <td>
-                          <p className="font-medium text-graphite-100">{task.collectionSlug || "Contract watch"}</p>
-                          <p className="mt-0.5 font-mono text-[11px] text-graphite-500">{task.contractAddress ?? task.id.slice(0, 10)}</p>
+                          <p className="font-medium" style={{ color: "var(--text-1)" }}>{task.collectionSlug || "Contract watch"}</p>
+                          <p className="mt-0.5 font-mono text-[11px]" style={{ color: "var(--text-3)" }}>{task.contractAddress ?? task.id.slice(0, 10)}</p>
                         </td>
                         <td>{task.wallet?.name ?? task.walletId.slice(0, 8)}</td>
                         <td>{task.network === "BASE" ? "Base" : "Ethereum"}</td>
@@ -243,24 +243,29 @@ export default function SniperPage() {
             <Panel className="modal-surface w-full max-w-2xl p-0">
               <div className="panel-header">
                 <div>
-                  <p className="text-[14px] font-semibold text-graphite-100">New Sniper Task</p>
-                  <p className="mt-0.5 text-[12px] text-graphite-500">Set a focused trigger with a clear spend ceiling.</p>
+                  <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>New Sniper Task</p>
+                  <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>Set a focused trigger with a clear spend ceiling.</p>
                 </div>
-                <button type="button" className="rounded p-1 text-graphite-500 hover:bg-graphite-800 hover:text-graphite-100" onClick={() => setShowForm(false)}>
+                <button
+                  type="button"
+                  className="rounded p-1 focus-ring"
+                  style={{ color: "var(--text-3)" }}
+                  onClick={() => setShowForm(false)}
+                >
                   <X size={16} />
                 </button>
               </div>
 
               <form className="grid gap-4 p-5 md:grid-cols-2" onSubmit={handleSubmit}>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Network</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Network</span>
                   <Select value={form.network} onChange={(event) => setField("network", event.target.value as "BASE" | "ETHEREUM")}>
                     <option value="BASE">Base</option>
                     <option value="ETHEREUM">Ethereum</option>
                   </Select>
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Wallet</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Wallet</span>
                   <Select value={form.walletId} onChange={(event) => setField("walletId", event.target.value)}>
                     <option value="">Select wallet</option>
                     {walletOptions.map((wallet) => (
@@ -269,47 +274,47 @@ export default function SniperPage() {
                   </Select>
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Strategy</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Strategy</span>
                   <Select value={form.type} onChange={(event) => setField("type", event.target.value as "FAT_FINGER" | "RARITY")}>
                     <option value="FAT_FINGER">Fat finger</option>
                     <option value="RARITY">Rarity score</option>
                   </Select>
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Quantity (NFTs)</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Quantity (NFTs)</span>
                   <Input type="number" min="1" step="1" value={form.quantity} onChange={(event) => setField("quantity", event.target.value)} />
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Collection slug</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Collection slug</span>
                   <Input value={form.collectionSlug} onChange={(event) => setField("collectionSlug", event.target.value)} placeholder="collection-name" />
                 </label>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Contract address</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Contract address</span>
                   <Input value={form.contractAddress} onChange={(event) => setField("contractAddress", event.target.value)} placeholder="0x..." />
                 </label>
                 {form.type === "FAT_FINGER" ? (
                   <>
                     <label>
-                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Max price ETH</span>
+                      <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Max price ETH</span>
                       <Input type="number" min="0" step="any" value={form.maxPriceEth} onChange={(event) => setField("maxPriceEth", event.target.value)} />
                     </label>
                     <label>
-                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Floor threshold</span>
+                      <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Floor threshold</span>
                       <Input type="number" min="0" max="1" step="any" value={form.floorThreshold} onChange={(event) => setField("floorThreshold", event.target.value)} />
                     </label>
                   </>
                 ) : (
                   <>
                     <label>
-                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Min price ETH</span>
+                      <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Min price ETH</span>
                       <Input type="number" min="0" step="any" value={form.minPriceEth} onChange={(event) => setField("minPriceEth", event.target.value)} placeholder="0.00 (optional)" />
                     </label>
                     <label>
-                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Max price ETH</span>
+                      <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Max price ETH</span>
                       <Input type="number" min="0" step="any" value={form.maxPriceEth} onChange={(event) => setField("maxPriceEth", event.target.value)} />
                     </label>
                     <label>
-                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">Minimum rarity score</span>
+                      <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Minimum rarity score</span>
                       <Input type="number" min="0" step="1" value={form.minRarityScore} onChange={(event) => setField("minRarityScore", event.target.value)} />
                     </label>
                   </>

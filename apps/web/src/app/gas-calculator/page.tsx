@@ -2,11 +2,37 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Calculator, RefreshCw, Wallet, Zap } from "lucide-react";
+import { AlertCircle, Calculator, CheckCircle2, RefreshCw, Send, Wallet, Zap } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { Badge, Input, Panel, Select } from "@/components/ui";
+import { Badge, Button, Input, Panel, Select } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 import { gweiFromWei, type GasQuote } from "@/lib/gas-settings";
+
+// ── Types ─────────────────────────────────────────────────────────────────
+
+interface WalletItem {
+  id: string;
+  name: string;
+  address: string;
+  network: string;
+  lastBalanceWei: string | null;
+}
+
+interface MintTaskCollection {
+  name: string;
+  chain: string;
+}
+
+interface MintTaskWalletRef {
+  walletId: string;
+}
+
+interface MintTaskItem {
+  id: string;
+  status: string;
+  collection: MintTaskCollection;
+  wallets: MintTaskWalletRef[];
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -44,11 +70,24 @@ function num(s: string, fallback = 0) {
 
 function Row({ label, eth, usd, highlight }: { label: string; eth: string; usd: string; highlight?: boolean }) {
   return (
-    <div className={`flex items-center justify-between rounded-md px-3 py-2.5 ${highlight ? "bg-graphite-700/60" : "bg-graphite-800/40"}`}>
-      <span className={`text-[12px] ${highlight ? "font-semibold text-graphite-100" : "text-graphite-400"}`}>{label}</span>
+    <div
+      className="flex items-center justify-between rounded-md px-3 py-2.5"
+      style={{ background: highlight ? "var(--surface-3)" : "var(--surface-2)" }}
+    >
+      <span
+        className="text-[12px]"
+        style={{ color: highlight ? "var(--text-1)" : "var(--text-3)", fontWeight: highlight ? 600 : undefined }}
+      >
+        {label}
+      </span>
       <div className="text-right">
-        <p className={`font-mono text-[13px] ${highlight ? "font-bold text-graphite-100" : "text-graphite-200"}`}>{eth} ETH</p>
-        <p className="font-mono text-[11px] text-graphite-500">{usd} USDT</p>
+        <p
+          className="font-mono text-[13px]"
+          style={{ color: highlight ? "var(--text-1)" : "var(--text-2)", fontWeight: highlight ? 700 : undefined }}
+        >
+          {eth} ETH
+        </p>
+        <p className="font-mono text-[11px]" style={{ color: "var(--text-3)" }}>{usd} USDT</p>
       </div>
     </div>
   );
@@ -70,11 +109,31 @@ export default function GasCalculatorPage() {
   const [walletBalance,    setWalletBalance]    = useState("");
   const [balanceMode,      setBalanceMode]      = useState<"full" | "gas">("full");
 
+  // Apply to wallet gas settings
+  const [selectedWalletId, setSelectedWalletId] = useState("");
+  const [selectedTaskId,   setSelectedTaskId]   = useState("");
+  const [applyState,       setApplyState]       = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [applyError,       setApplyError]       = useState("");
+
   // Live gas
   const { data: gas, dataUpdatedAt, refetch, isFetching } = useQuery<GasQuote>({
     queryKey: ["gas-current", network],
     queryFn:  () => apiFetch<GasQuote>(`/gas/current?network=${network}`),
     refetchInterval: 10_000,
+  });
+
+  // Wallet list (for apply panel)
+  const { data: walletList = [] } = useQuery<WalletItem[]>({
+    queryKey: ["wallets-list"],
+    queryFn:  () => apiFetch<WalletItem[]>("/wallets"),
+    staleTime: 30_000,
+  });
+
+  // Mint task list (for apply panel)
+  const { data: mintTaskList = [] } = useQuery<MintTaskItem[]>({
+    queryKey: ["mint-tasks-list"],
+    queryFn:  () => apiFetch<MintTaskItem[]>("/mint-tasks"),
+    staleTime: 30_000,
   });
 
   // ETH/USD price
@@ -183,6 +242,47 @@ export default function GasCalculatorPage() {
 
   const lastUpdate = dataUpdatedAt ? new Date(dataUpdatedAt).toLocaleTimeString() : "—";
 
+  // ── Apply to wallet gas settings ─────────────────────────────────────────
+
+  // Only show tasks that contain the selected wallet
+  const tasksForWallet = selectedWalletId
+    ? mintTaskList.filter(t => t.wallets.some(w => w.walletId === selectedWalletId))
+    : mintTaskList;
+
+  // Map speed tier to gas mode
+  const modeForGas: "safe" | "balanced" | "aggressive" =
+    speedKey === "safe"     ? "safe"       :
+    speedKey === "balanced" ? "balanced"   : "aggressive";
+
+  // The gas settings that will be pushed to the API
+  const settingsToApply = {
+    mode:               manualG > 0 ? "aggressive" as const : modeForGas,
+    maxFeeGwei:         capGwei,
+    priorityFeeGwei:    recPri,
+    maxTotalGasCostEth: gasCapPer,
+    gasBumpEnabled:     true,
+    maxBumpAttempts:    modeForGas === "safe" ? 2 : modeForGas === "balanced" ? 3 : 5,
+  };
+
+  const canApplyGas = Boolean(selectedWalletId && selectedTaskId && (hasGas || manualG > 0));
+
+  async function handleApplyGas() {
+    if (!canApplyGas) return;
+    setApplyState("loading");
+    setApplyError("");
+    try {
+      await apiFetch(`/mint-tasks/${selectedTaskId}/wallets/${selectedWalletId}/gas`, {
+        method: "PATCH",
+        body:   JSON.stringify(settingsToApply),
+      });
+      setApplyState("success");
+      setTimeout(() => setApplyState("idle"), 3_500);
+    } catch (err) {
+      setApplyState("error");
+      setApplyError(err instanceof Error ? err.message : "Failed to apply settings.");
+    }
+  }
+
   return (
     <AppShell title="Gas Calculator">
       <div className="grid gap-5 xl:grid-cols-[1fr_400px]">
@@ -194,11 +294,11 @@ export default function GasCalculatorPage() {
           <div className="grid gap-3 sm:grid-cols-4">
             <div className="metric-card">
               <p className="label-caps">Base Fee</p>
-              <p className="metric-value text-[16px]">{hasGas ? fg(baseGwei) : "—"} <span className="text-[11px] text-graphite-500">gwei</span></p>
+              <p className="metric-value text-[16px]">{hasGas ? fg(baseGwei) : "—"} <span className="text-[11px]" style={{ color: "var(--text-3)" }}>gwei</span></p>
             </div>
             <div className="metric-card">
               <p className="label-caps">Priority</p>
-              <p className="metric-value text-[16px]">{hasGas ? fg(liveP) : "—"} <span className="text-[11px] text-graphite-500">gwei</span></p>
+              <p className="metric-value text-[16px]">{hasGas ? fg(liveP) : "—"} <span className="text-[11px]" style={{ color: "var(--text-3)" }}>gwei</span></p>
             </div>
             <div className="metric-card">
               <p className="label-caps">ETH price</p>
@@ -219,26 +319,26 @@ export default function GasCalculatorPage() {
           <Panel>
             <div className="panel-header">
               <div>
-                <p className="text-[14px] font-semibold text-graphite-100">Mint Details</p>
-                <p className="mt-0.5 text-[12px] text-graphite-500">Wallet count, mint price, and quantity per wallet.</p>
+                <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Mint Details</p>
+                <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>Wallet count, mint price, and quantity per wallet.</p>
               </div>
-              <Calculator size={18} className="text-graphite-500" />
+              <Calculator size={18} style={{ color: "var(--text-3)" }} />
             </div>
             <div className="grid gap-4 p-5 sm:grid-cols-3">
               <label>
-                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em] text-graphite-500">Wallets</span>
+                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>Wallets</span>
                 <Input type="number" min="1" value={walletCount} onChange={e => setWalletCount(e.target.value)} placeholder="8" />
-                <p className="mt-1 text-[11px] text-graphite-500">How many wallets minting</p>
+                <p className="mt-1 text-[11px]" style={{ color: "var(--text-3)" }}>How many wallets minting</p>
               </label>
               <label>
-                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em] text-graphite-500">Mint Price (ETH)</span>
+                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>Mint Price (ETH)</span>
                 <Input type="number" min="0" step="any" value={mintPriceEth} onChange={e => setMintPriceEth(e.target.value)} placeholder="0.05" />
-                <p className="mt-1 text-[11px] text-graphite-500">NFT price per mint</p>
+                <p className="mt-1 text-[11px]" style={{ color: "var(--text-3)" }}>NFT price per mint</p>
               </label>
               <label>
-                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em] text-graphite-500">Qty per Wallet</span>
+                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>Qty per Wallet</span>
                 <Input type="number" min="1" value={qtyPerWallet} onChange={e => setQtyPerWallet(e.target.value)} placeholder="1" />
-                <p className="mt-1 text-[11px] text-graphite-500">NFTs to mint per wallet</p>
+                <p className="mt-1 text-[11px]" style={{ color: "var(--text-3)" }}>NFTs to mint per wallet</p>
               </label>
             </div>
           </Panel>
@@ -246,28 +346,27 @@ export default function GasCalculatorPage() {
           {/* Contract type */}
           <Panel>
             <div className="panel-header">
-              <p className="text-[14px] font-semibold text-graphite-100">Contract Type</p>
-              <p className="text-[12px] text-graphite-500">Determines gas units used</p>
+              <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Contract Type</p>
+              <p className="text-[12px]" style={{ color: "var(--text-3)" }}>Determines gas units used</p>
             </div>
             <div className="grid gap-2 p-5 sm:grid-cols-3">
               {CONTRACT_TYPES.map((ct, i) => (
                 <button key={ct.label} type="button" onClick={() => setContractIdx(i)}
-                  className={`rounded-md border px-3 py-2 text-left text-[12px] transition-colors ${
-                    contractIdx === i
-                      ? "border-brand bg-brand/10 text-graphite-100"
-                      : "border-graphite-700 bg-graphite-800 text-graphite-400 hover:border-graphite-600 hover:text-graphite-200"
-                  }`}>
+                  className="rounded-md border px-3 py-2 text-left text-[12px] transition-colors"
+                  style={contractIdx === i
+                    ? { borderColor: "var(--brand)", background: "var(--brand-surface)", color: "var(--text-1)" }
+                    : { borderColor: "var(--border)", background: "var(--surface-2)", color: "var(--text-3)" }}>
                   <span className="block font-medium">{ct.label}</span>
-                  <span className="mt-0.5 block text-[11px] text-graphite-500">
+                  <span className="mt-0.5 block text-[11px]" style={{ color: "var(--text-3)" }}>
                     {ct.units > 0 ? `~${ct.units.toLocaleString()} gas` : "Enter below"}
                   </span>
                 </button>
               ))}
             </div>
             {CONTRACT_TYPES[contractIdx].units === 0 && (
-              <div className="border-t border-graphite-700 p-5">
+              <div className="p-5" style={{ borderTop: "1px solid var(--border)" }}>
                 <label>
-                  <span className="mb-1 block text-[11px] font-medium text-graphite-400">Custom gas units</span>
+                  <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Custom gas units</span>
                   <Input type="number" min="21000" value={customUnits} onChange={e => setCustomUnits(e.target.value)} className="max-w-[200px]" />
                 </label>
               </div>
@@ -278,10 +377,10 @@ export default function GasCalculatorPage() {
           <Panel>
             <div className="panel-header">
               <div>
-                <p className="text-[14px] font-semibold text-graphite-100">Gas Speed / Gwei</p>
-                <p className="mt-0.5 text-[12px] text-graphite-500">Pick a speed tier or enter a manual gwei override.</p>
+                <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Gas Speed / Gwei</p>
+                <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>Pick a speed tier or enter a manual gwei override.</p>
               </div>
-              <Zap size={18} className="text-graphite-500" />
+              <Zap size={18} style={{ color: "var(--text-3)" }} />
             </div>
             <div className="grid gap-2 px-5 pb-3 sm:grid-cols-4">
               {SPEED_TIERS.map(t => {
@@ -290,27 +389,26 @@ export default function GasCalculatorPage() {
                 return (
                   <button key={t.key} type="button"
                     onClick={() => { setSpeedKey(t.key); setManualGwei(""); }}
-                    className={`rounded-md border p-3 text-left transition-colors ${
-                      speedKey === t.key && !manualGwei
-                        ? "border-brand bg-brand/10"
-                        : "border-graphite-700 bg-graphite-800 hover:border-graphite-600"
-                    }`}>
+                    className="rounded-md border p-3 text-left transition-colors"
+                    style={speedKey === t.key && !manualGwei
+                      ? { borderColor: "var(--brand)", background: "var(--brand-surface)" }
+                      : { borderColor: "var(--border)", background: "var(--surface-2)" }}>
                     <div className="flex items-center justify-between">
-                      <span className="text-[12px] font-semibold text-graphite-100">{t.label}</span>
+                      <span className="text-[12px] font-semibold" style={{ color: "var(--text-1)" }}>{t.label}</span>
                       <Badge tone={t.badge}>{t.key}</Badge>
                     </div>
-                    <p className="mt-1.5 font-mono text-[13px] font-bold text-graphite-100">
+                    <p className="mt-1.5 font-mono text-[13px] font-bold" style={{ color: "var(--text-1)" }}>
                       {hasGas ? fg(tMax) : "—"} gwei
                     </p>
-                    <p className="text-[11px] text-graphite-500">{t.baseMul}× base fee</p>
+                    <p className="text-[11px]" style={{ color: "var(--text-3)" }}>{t.baseMul}× base fee</p>
                   </button>
                 );
               })}
             </div>
-            <div className="border-t border-graphite-700 p-5">
+            <div className="p-5" style={{ borderTop: "1px solid var(--border)" }}>
               <label>
-                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em] text-graphite-500">
-                  Manual gwei override <span className="normal-case text-graphite-600">(leave blank to use speed tier)</span>
+                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>
+                  Manual gwei override <span className="normal-case" style={{ color: "var(--text-3)", opacity: 0.7 }}>(leave blank to use speed tier)</span>
                 </span>
                 <div className="flex items-center gap-3">
                   <Input type="number" min="0" step="any" value={manualGwei}
@@ -335,45 +433,46 @@ export default function GasCalculatorPage() {
           <Panel>
             <div className="panel-header">
               <div>
-                <p className="text-[14px] font-semibold text-graphite-100">Wallet Balance Checker</p>
-                <p className="mt-0.5 text-[12px] text-graphite-500">
+                <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Wallet Balance Checker</p>
+                <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>
                   Enter your wallet&apos;s ETH balance — see the max gwei you can afford and which speed tiers are reachable.
                 </p>
               </div>
-              <Wallet size={18} className="text-graphite-500" />
+              <Wallet size={18} style={{ color: "var(--text-3)" }} />
             </div>
             <div className="p-5 space-y-4">
               {/* Mode toggle */}
-              <div className="flex items-center gap-1 rounded-md border border-graphite-700 bg-graphite-900 p-1 w-fit">
+              <div
+                className="flex items-center gap-1 rounded-md p-1 w-fit"
+                style={{ border: "1px solid var(--border)", background: "var(--surface)" }}
+              >
                 <button
                   type="button"
                   onClick={() => setBalanceMode("full")}
-                  className={`rounded px-3 py-1.5 text-[11px] font-semibold transition-colors ${
-                    balanceMode === "full"
-                      ? "bg-brand text-white"
-                      : "text-graphite-400 hover:text-graphite-200"
-                  }`}>
+                  className="rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
+                  style={balanceMode === "full"
+                    ? { background: "var(--brand)", color: "#fff" }
+                    : { color: "var(--text-3)" }}>
                   Full Balance
                 </button>
                 <button
                   type="button"
                   onClick={() => setBalanceMode("gas")}
-                  className={`rounded px-3 py-1.5 text-[11px] font-semibold transition-colors ${
-                    balanceMode === "gas"
-                      ? "bg-brand text-white"
-                      : "text-graphite-400 hover:text-graphite-200"
-                  }`}>
+                  className="rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
+                  style={balanceMode === "gas"
+                    ? { background: "var(--brand)", color: "#fff" }
+                    : { color: "var(--text-3)" }}>
                   Gas Budget Only
                 </button>
               </div>
-              <p className="text-[11px] text-graphite-500">
+              <p className="text-[11px]" style={{ color: "var(--text-3)" }}>
                 {balanceMode === "full"
                   ? "Wallet total ETH — mint fee auto subtracted to get gas budget."
                   : "ETH set aside for gas only — mint fee not included."}
               </p>
 
               <label>
-                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em] text-graphite-500">
+                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>
                   {balanceMode === "full" ? "Wallet balance (ETH)" : "Gas budget (ETH)"}
                 </span>
                 <Input
@@ -390,14 +489,14 @@ export default function GasCalculatorPage() {
 
                   {/* Balance summary row */}
                   <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="rounded-md border border-graphite-700 bg-graphite-800 p-4">
-                      <p className="text-[10px] uppercase tracking-[0.08em] text-graphite-500">Balance</p>
-                      <p className="mt-2 font-mono text-[22px] font-bold leading-none text-graphite-100">{f6(balanceEth)}</p>
-                      <p className="mt-0.5 text-[11px] font-semibold text-graphite-400">ETH</p>
-                      {ethUsd > 0 && <p className="mt-1.5 text-[12px] text-graphite-500">${f2(balanceEth * ethUsd)}</p>}
+                    <div className="panel-section p-4">
+                      <p className="text-[10px] uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>Balance</p>
+                      <p className="mt-2 font-mono text-[22px] font-bold leading-none" style={{ color: "var(--text-1)" }}>{f6(balanceEth)}</p>
+                      <p className="mt-0.5 text-[11px] font-semibold" style={{ color: "var(--text-2)" }}>ETH</p>
+                      {ethUsd > 0 && <p className="mt-1.5 text-[12px]" style={{ color: "var(--text-3)" }}>${f2(balanceEth * ethUsd)}</p>}
                     </div>
-                    <div className="rounded-md border border-graphite-700 bg-graphite-800 p-4">
-                      <p className="text-[10px] uppercase tracking-[0.08em] text-graphite-500">
+                    <div className="panel-section p-4">
+                      <p className="text-[10px] uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>
                         {balanceMode === "full" ? "After Mint Fee" : "Gas Budget"}
                       </p>
                       <p className={`mt-2 font-mono text-[22px] font-bold leading-none ${remainingForGas > 0 ? "text-status-green-text" : "text-status-red-text"}`}>
@@ -406,19 +505,19 @@ export default function GasCalculatorPage() {
                       <p className={`mt-0.5 text-[11px] font-semibold ${remainingForGas > 0 ? "text-status-green-text" : "text-status-red-text"}`} style={{ opacity: 0.7 }}>
                         ETH
                       </p>
-                      <p className="mt-1.5 text-[12px] text-graphite-500">
+                      <p className="mt-1.5 text-[12px]" style={{ color: "var(--text-3)" }}>
                         {balanceMode === "full" ? "left for gas" : "available"}
                       </p>
                     </div>
-                    <div className="rounded-md border border-graphite-700 bg-graphite-800 p-4">
-                      <p className="text-[10px] uppercase tracking-[0.08em] text-graphite-500">Max Gwei</p>
+                    <div className="panel-section p-4">
+                      <p className="text-[10px] uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>Max Gwei</p>
                       <p className={`mt-2 font-mono text-[22px] font-bold leading-none ${maxAffordableGwei > 0 ? "text-brand" : "text-status-red-text"}`}>
                         {maxAffordableGwei > 0 ? fg(maxAffordableGwei) : "0"}
                       </p>
                       <p className={`mt-0.5 text-[11px] font-semibold ${maxAffordableGwei > 0 ? "text-brand" : "text-status-red-text"}`} style={{ opacity: 0.7 }}>
                         gwei
                       </p>
-                      <p className="mt-1.5 text-[12px] text-graphite-500">you can set</p>
+                      <p className="mt-1.5 text-[12px]" style={{ color: "var(--text-3)" }}>you can set</p>
                     </div>
                   </div>
 
@@ -445,10 +544,13 @@ export default function GasCalculatorPage() {
 
                   {/* Tier affordability table */}
                   {hasGas && (
-                    <div className="overflow-hidden rounded-md border border-graphite-700">
+                    <div className="overflow-hidden rounded-md" style={{ border: "1px solid var(--border)" }}>
                       <table className="w-full text-[12px]">
                         <thead>
-                          <tr className="border-b border-graphite-700 bg-graphite-800/60 text-left text-graphite-500">
+                          <tr
+                            className="text-left"
+                            style={{ borderBottom: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-3)" }}
+                          >
                             <th className="px-3 py-2">Speed</th>
                             <th className="px-3 py-2">Needs gwei</th>
                             <th className="px-3 py-2">Total cost</th>
@@ -457,12 +559,16 @@ export default function GasCalculatorPage() {
                         </thead>
                         <tbody>
                           {tierAffordability.map(t => (
-                            <tr key={t.key} className={`border-b border-graphite-700/50 ${t.canAfford ? "bg-graphite-800/20" : "opacity-50"}`}>
+                            <tr
+                              key={t.key}
+                              className={t.canAfford ? "" : "opacity-50"}
+                              style={{ borderBottom: "1px solid var(--border)", background: t.canAfford ? "var(--surface-2)" : undefined }}
+                            >
                               <td className="px-3 py-2.5"><Badge tone={t.badge}>{t.label}</Badge></td>
-                              <td className="px-3 py-2.5 font-mono text-graphite-200">{fg(t.tMax)} gwei</td>
+                              <td className="px-3 py-2.5 font-mono" style={{ color: "var(--text-2)" }}>{fg(t.tMax)} gwei</td>
                               <td className="px-3 py-2.5">
-                                <p className="font-mono text-graphite-200">{f6(t.tCost)} ETH</p>
-                                {ethUsd > 0 && <p className="font-mono text-[11px] text-graphite-500">${f2(t.tCost * ethUsd)}</p>}
+                                <p className="font-mono" style={{ color: "var(--text-2)" }}>{f6(t.tCost)} ETH</p>
+                                {ethUsd > 0 && <p className="font-mono text-[11px]" style={{ color: "var(--text-3)" }}>${f2(t.tCost * ethUsd)}</p>}
                               </td>
                               <td className="px-3 py-2.5">
                                 {t.canAfford === true ? (
@@ -480,10 +586,13 @@ export default function GasCalculatorPage() {
 
                   {/* Max gwei vs live base fee comparison */}
                   {hasGas && maxAffordableGwei > 0 && (
-                    <div className="rounded-md border border-graphite-700 bg-graphite-800/40 px-3 py-2.5 text-[12px] text-graphite-400 space-y-1">
+                    <div
+                      className="rounded-md px-3 py-2.5 text-[12px] space-y-1"
+                      style={{ border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-3)" }}
+                    >
                       <p>
-                        <span className="text-graphite-300 font-medium">Max affordable:</span>{" "}
-                        <span className="font-mono text-graphite-100">{fg(maxAffordableGwei)} gwei</span>
+                        <span className="font-medium" style={{ color: "var(--text-2)" }}>Max affordable:</span>{" "}
+                        <span className="font-mono" style={{ color: "var(--text-1)" }}>{fg(maxAffordableGwei)} gwei</span>
                         {maxAffordableGwei >= (baseGwei * SPEED_TIERS[2].baseMul + Math.max(SPEED_TIERS[2].priBase[network], liveP * 1.1))
                           ? <span className="ml-2 text-status-green-text">✓ Fast mint reachable</span>
                           : maxAffordableGwei >= (baseGwei * SPEED_TIERS[1].baseMul + Math.max(SPEED_TIERS[1].priBase[network], liveP * 1.1))
@@ -492,8 +601,8 @@ export default function GasCalculatorPage() {
                         }
                       </p>
                       <p>
-                        <span className="text-graphite-300 font-medium">Live base fee:</span>{" "}
-                        <span className="font-mono text-graphite-100">{fg(baseGwei)} gwei</span>
+                        <span className="font-medium" style={{ color: "var(--text-2)" }}>Live base fee:</span>{" "}
+                        <span className="font-mono" style={{ color: "var(--text-1)" }}>{fg(baseGwei)} gwei</span>
                         <span className="ml-2">— your max is{" "}
                           <span className={maxAffordableGwei > baseGwei ? "text-status-green-text" : "text-status-red-text"}>
                             {maxAffordableGwei > baseGwei
@@ -512,9 +621,10 @@ export default function GasCalculatorPage() {
           {/* Speed comparison table */}
           <Panel>
             <div className="panel-header">
-              <p className="text-[14px] font-semibold text-graphite-100">Speed Comparison</p>
+              <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Speed Comparison</p>
               <button type="button" onClick={() => refetch()}
-                className="flex items-center gap-1 text-[11px] text-graphite-500 hover:text-graphite-300">
+                className="flex items-center gap-1 text-[11px] transition-colors"
+                style={{ color: "var(--text-3)" }}>
                 <RefreshCw size={12} className={isFetching ? "animate-spin" : ""} />
                 {lastUpdate}
               </button>
@@ -522,7 +632,7 @@ export default function GasCalculatorPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-[12px]">
                 <thead>
-                  <tr className="border-b border-graphite-700 text-left text-graphite-500">
+                  <tr className="text-left" style={{ borderBottom: "1px solid var(--border)", color: "var(--text-3)" }}>
                     <th className="px-4 py-2">Speed</th>
                     <th className="px-4 py-2">Gwei</th>
                     <th className="px-4 py-2">Gas/wallet</th>
@@ -542,14 +652,18 @@ export default function GasCalculatorPage() {
                     const active  = t.key === speedKey && !manualGwei;
                     return (
                       <tr key={t.key}
-                        className={`border-b border-graphite-700/50 cursor-pointer transition-colors ${active ? "bg-brand/5" : "hover:bg-graphite-800/40"}`}
+                        className="cursor-pointer transition-colors"
+                        style={{
+                          borderBottom: "1px solid var(--border)",
+                          background: active ? "var(--brand-surface)" : undefined,
+                        }}
                         onClick={() => { setSpeedKey(t.key); setManualGwei(""); }}>
                         <td className="px-4 py-2.5"><Badge tone={t.badge}>{t.label}</Badge></td>
-                        <td className="px-4 py-2.5 font-mono text-graphite-100">{hasGas ? fg(tMax) : "—"}</td>
-                        <td className="px-4 py-2.5 font-mono text-graphite-200">{hasGas ? f6(tGas) : "—"} ETH</td>
-                        <td className="px-4 py-2.5 font-mono text-graphite-200">${hasGas && ethUsd ? f2(eth2usd(tGas, ethUsd)) : "—"}</td>
-                        <td className="px-4 py-2.5 font-mono text-graphite-100">{hasGas ? f6(tTot) : "—"} ETH</td>
-                        <td className="px-4 py-2.5 font-mono font-semibold text-graphite-100">${hasGas && ethUsd ? f2(eth2usd(tTotAll, ethUsd)) : "—"}</td>
+                        <td className="px-4 py-2.5 font-mono" style={{ color: "var(--text-1)" }}>{hasGas ? fg(tMax) : "—"}</td>
+                        <td className="px-4 py-2.5 font-mono" style={{ color: "var(--text-2)" }}>{hasGas ? f6(tGas) : "—"} ETH</td>
+                        <td className="px-4 py-2.5 font-mono" style={{ color: "var(--text-2)" }}>${hasGas && ethUsd ? f2(eth2usd(tGas, ethUsd)) : "—"}</td>
+                        <td className="px-4 py-2.5 font-mono" style={{ color: "var(--text-1)" }}>{hasGas ? f6(tTot) : "—"} ETH</td>
+                        <td className="px-4 py-2.5 font-mono font-semibold" style={{ color: "var(--text-1)" }}>${hasGas && ethUsd ? f2(eth2usd(tTotAll, ethUsd)) : "—"}</td>
                       </tr>
                     );
                   })}
@@ -563,19 +677,22 @@ export default function GasCalculatorPage() {
         <div className="space-y-4">
 
           {/* Active gwei */}
-          <div className="rounded-md border border-graphite-700 bg-graphite-800/60 px-4 py-3 flex items-center justify-between">
+          <div
+            className="rounded-md px-4 py-3 flex items-center justify-between"
+            style={{ border: "1px solid var(--border)", background: "var(--surface-2)" }}
+          >
             <div>
-              <p className="text-[11px] uppercase tracking-[0.08em] text-graphite-500">Active Gwei Setting</p>
-              <p className="mt-0.5 text-[22px] font-bold text-graphite-100 font-mono">
+              <p className="text-[11px] uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>Active Gwei Setting</p>
+              <p className="mt-0.5 text-[22px] font-bold font-mono" style={{ color: "var(--text-1)" }}>
                 {hasGas || manualG > 0 ? fg(useGwei) : "—"}
-                <span className="ml-1 text-[13px] font-normal text-graphite-500">gwei</span>
+                <span className="ml-1 text-[13px] font-normal" style={{ color: "var(--text-3)" }}>gwei</span>
               </p>
             </div>
             <div className="text-right">
-              <p className="text-[11px] text-graphite-500">
+              <p className="text-[11px]" style={{ color: "var(--text-3)" }}>
                 {manualG > 0 ? "Manual override" : `${tier.label} tier • auto`}
               </p>
-              <p className="mt-0.5 text-[12px] text-graphite-400">{gasUnits.toLocaleString()} gas units</p>
+              <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-2)" }}>{gasUnits.toLocaleString()} gas units</p>
             </div>
           </div>
 
@@ -586,25 +703,26 @@ export default function GasCalculatorPage() {
                 ? "border-status-green-border bg-status-green-bg/10"
                 : "border-status-red-border bg-status-red-bg/10"
             }`}>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-graphite-400">Balance Analysis</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--text-2)" }}>Balance Analysis</p>
               <div className="flex items-center justify-between">
-                <span className="text-[12px] text-graphite-400">Your balance</span>
-                <span className="font-mono text-[13px] text-graphite-100">{f6(balanceEth)} ETH</span>
+                <span className="text-[12px]" style={{ color: "var(--text-3)" }}>Your balance</span>
+                <span className="font-mono text-[13px]" style={{ color: "var(--text-1)" }}>{f6(balanceEth)} ETH</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-[12px] text-graphite-400">Max gwei you can set</span>
-                <span className={`font-mono text-[15px] font-bold ${maxAffordableGwei > 0 ? "text-graphite-100" : "text-status-red-text"}`}>
+                <span className="text-[12px]" style={{ color: "var(--text-3)" }}>Max gwei you can set</span>
+                <span className={`font-mono text-[15px] font-bold ${maxAffordableGwei > 0 ? "" : "text-status-red-text"}`}
+                  style={maxAffordableGwei > 0 ? { color: "var(--text-1)" } : undefined}>
                   {maxAffordableGwei > 0 ? fg(maxAffordableGwei) : "0"} gwei
                 </span>
               </div>
-              <div className="border-t border-graphite-700/50 pt-2">
+              <div className="pt-2" style={{ borderTop: "1px solid var(--border)" }}>
                 <p className={`text-[13px] font-semibold ${bestAffordableTier ? "text-status-green-text" : "text-status-red-text"}`}>
                   {bestAffordableTier
                     ? `✓ Can mint at ${bestAffordableTier.label} speed`
                     : "✗ Cannot afford any speed tier"}
                 </p>
                 {bestAffordableTier && (
-                  <p className="mt-0.5 text-[11px] text-graphite-500">
+                  <p className="mt-0.5 text-[11px]" style={{ color: "var(--text-3)" }}>
                     Need {fg(bestAffordableTier.tMax)} gwei — you can afford up to {fg(maxAffordableGwei)} gwei
                   </p>
                 )}
@@ -615,8 +733,8 @@ export default function GasCalculatorPage() {
           {/* Per wallet */}
           <Panel>
             <div className="panel-header">
-              <p className="text-[14px] font-semibold text-graphite-100">Per Wallet</p>
-              <span className="text-[12px] text-graphite-500">{qty > 1 ? `${qty}× mint` : "1 mint"}</span>
+              <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Per Wallet</p>
+              <span className="text-[12px]" style={{ color: "var(--text-3)" }}>{qty > 1 ? `${qty}× mint` : "1 mint"}</span>
             </div>
             <div className="space-y-2 p-4">
               <Row label="Gas fee"
@@ -624,7 +742,7 @@ export default function GasCalculatorPage() {
                 usd={hasGas || manualG > 0 ? f2(gasUsdPer) : "—"} />
               <Row label={`Mint fee${qty > 1 ? ` (${qty}×)` : ""}`}
                 eth={f6(mintEthPer)} usd={ethUsd ? f2(mintUsdPer) : "—"} />
-              <div className="my-1 border-t border-graphite-700" />
+              <div className="my-1" style={{ borderTop: "1px solid var(--border)" }} />
               <Row label="Total per wallet"
                 eth={hasGas || manualG > 0 ? f6(totalEthPer) : "—"}
                 usd={hasGas || manualG > 0 ? f2(totalUsdPer) : "—"}
@@ -638,8 +756,8 @@ export default function GasCalculatorPage() {
           {/* All wallets */}
           <Panel>
             <div className="panel-header">
-              <p className="text-[14px] font-semibold text-graphite-100">All Wallets</p>
-              <span className="text-[12px] text-graphite-500">{wallets}w × {qty} mint{qty > 1 ? "s" : ""}</span>
+              <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>All Wallets</p>
+              <span className="text-[12px]" style={{ color: "var(--text-3)" }}>{wallets}w × {qty} mint{qty > 1 ? "s" : ""}</span>
             </div>
             <div className="space-y-2 p-4">
               <Row label="Total gas"
@@ -647,7 +765,7 @@ export default function GasCalculatorPage() {
                 usd={hasGas || manualG > 0 ? f2(gasUsdAll) : "—"} />
               <Row label="Total mint fee"
                 eth={f6(mintEthAll)} usd={ethUsd ? f2(mintUsdAll) : "—"} />
-              <div className="my-1 border-t border-graphite-700" />
+              <div className="my-1" style={{ borderTop: "1px solid var(--border)" }} />
               <Row label={`Grand total (${wallets}w)`}
                 eth={hasGas || manualG > 0 ? f4(totalEthAll) : "—"}
                 usd={hasGas || manualG > 0 ? f2(totalUsdAll) : "—"}
@@ -659,23 +777,26 @@ export default function GasCalculatorPage() {
           </Panel>
 
           {/* Cost summary */}
-          <div className="rounded-md border border-brand/30 bg-brand/5 p-4 space-y-3">
+          <div
+            className="rounded-md p-4 space-y-3"
+            style={{ border: "1px solid var(--brand)", background: "var(--brand-surface)" }}
+          >
             <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-brand">Cost Summary</p>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <p className="text-[11px] text-graphite-500">Gas cost (USDT)</p>
-                <p className="text-[18px] font-bold text-graphite-100">${hasGas || manualG > 0 ? f2(gasUsdAll) : "—"}</p>
+                <p className="text-[11px]" style={{ color: "var(--text-3)" }}>Gas cost (USDT)</p>
+                <p className="text-[18px] font-bold" style={{ color: "var(--text-1)" }}>${hasGas || manualG > 0 ? f2(gasUsdAll) : "—"}</p>
               </div>
               <div>
-                <p className="text-[11px] text-graphite-500">Mint cost (USDT)</p>
-                <p className="text-[18px] font-bold text-graphite-100">${ethUsd ? f2(mintUsdAll) : "—"}</p>
+                <p className="text-[11px]" style={{ color: "var(--text-3)" }}>Mint cost (USDT)</p>
+                <p className="text-[18px] font-bold" style={{ color: "var(--text-1)" }}>${ethUsd ? f2(mintUsdAll) : "—"}</p>
               </div>
-              <div className="col-span-2 border-t border-graphite-700 pt-3">
-                <p className="text-[11px] text-graphite-500">Total spend (USDT)</p>
-                <p className="text-[26px] font-black text-graphite-100">
+              <div className="col-span-2 pt-3" style={{ borderTop: "1px solid var(--border)" }}>
+                <p className="text-[11px]" style={{ color: "var(--text-3)" }}>Total spend (USDT)</p>
+                <p className="text-[26px] font-black" style={{ color: "var(--text-1)" }}>
                   ${hasGas || manualG > 0 ? f2(totalUsdAll) : "—"}
                 </p>
-                <p className="text-[11px] text-graphite-500 mt-0.5">
+                <p className="text-[11px] mt-0.5" style={{ color: "var(--text-3)" }}>
                   {hasGas || manualG > 0
                     ? `${f4(totalEthAll)} ETH across ${wallets} wallet${wallets > 1 ? "s" : ""}`
                     : "Enter details above"}
@@ -686,8 +807,11 @@ export default function GasCalculatorPage() {
 
           {/* Gwei reference */}
           {hasGas && (
-            <div className="rounded-md border border-graphite-700 bg-graphite-800/60 p-4 space-y-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-graphite-400">Gwei Reference</p>
+            <div
+              className="rounded-md p-4 space-y-2"
+              style={{ border: "1px solid var(--border)", background: "var(--surface-2)" }}
+            >
+              <p className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--text-2)" }}>Gwei Reference</p>
               {SPEED_TIERS.map(t => {
                 const tP = Math.max(t.priBase[network], liveP * 1.1);
                 const tM = baseGwei * t.baseMul + tP;
@@ -695,7 +819,7 @@ export default function GasCalculatorPage() {
                 return (
                   <div key={t.key} className="flex items-center justify-between">
                     <Badge tone={t.badge}>{t.label}</Badge>
-                    <span className="font-mono text-[12px] text-graphite-100">{fg(tM)} gwei</span>
+                    <span className="font-mono text-[12px]" style={{ color: "var(--text-1)" }}>{fg(tM)} gwei</span>
                     {affordable !== null && (
                       <span className={`text-[11px] font-semibold ${affordable ? "text-status-green-text" : "text-status-red-text"}`}>
                         {affordable ? "✓" : "✗"}
@@ -706,6 +830,128 @@ export default function GasCalculatorPage() {
               })}
             </div>
           )}
+
+          {/* ── Apply to Wallet Gas Settings ─────────────────────────────── */}
+          <Panel>
+            <div className="panel-header">
+              <div>
+                <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Apply to Wallet</p>
+                <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>
+                  Push these gas settings to a specific wallet in a mint task.
+                </p>
+              </div>
+              <Send size={16} style={{ color: "var(--text-3)" }} />
+            </div>
+
+            <div className="space-y-4 p-5">
+              {/* Wallet selector */}
+              <label>
+                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>
+                  Wallet
+                </span>
+                <Select
+                  value={selectedWalletId}
+                  onChange={e => {
+                    setSelectedWalletId(e.target.value);
+                    setSelectedTaskId("");    // reset task when wallet changes
+                    setApplyState("idle");
+                  }}
+                >
+                  <option value="">— Select wallet —</option>
+                  {walletList.map(w => (
+                    <option key={w.id} value={w.id}>
+                      {w.name} · {w.address.slice(0, 6)}…{w.address.slice(-4)} ({w.network})
+                    </option>
+                  ))}
+                </Select>
+              </label>
+
+              {/* Mint task / collection selector */}
+              <label>
+                <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>
+                  Collection / Mint Task
+                  {selectedWalletId && tasksForWallet.length === 0 && (
+                    <span className="ml-2 normal-case text-status-red-text">— wallet not in any task</span>
+                  )}
+                </span>
+                <Select
+                  value={selectedTaskId}
+                  onChange={e => { setSelectedTaskId(e.target.value); setApplyState("idle"); }}
+                  disabled={!selectedWalletId}
+                >
+                  <option value="">— Select mint task —</option>
+                  {tasksForWallet.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.collection.name} · {t.status} ({t.collection.chain})
+                    </option>
+                  ))}
+                </Select>
+              </label>
+
+              {/* Settings preview */}
+              {(hasGas || manualG > 0) && (
+                <div
+                  className="rounded-md px-3 py-2.5 space-y-1.5"
+                  style={{ border: "1px solid var(--border)", background: "var(--surface-2)" }}
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>
+                    Settings to apply
+                  </p>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
+                      Mode: <span className="font-semibold" style={{ color: "var(--text-1)" }}>{settingsToApply.mode}</span>
+                    </span>
+                    <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
+                      Max fee: <span className="font-mono font-semibold" style={{ color: "var(--text-1)" }}>{fg(settingsToApply.maxFeeGwei)} gwei</span>
+                    </span>
+                    <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
+                      Priority: <span className="font-mono font-semibold" style={{ color: "var(--text-1)" }}>{fg(settingsToApply.priorityFeeGwei)} gwei</span>
+                    </span>
+                    <span className="text-[12px]" style={{ color: "var(--text-3)" }}>
+                      Gas cap: <span className="font-mono font-semibold" style={{ color: "var(--text-1)" }}>{f6(settingsToApply.maxTotalGasCostEth)} ETH</span>
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Apply button + feedback */}
+              <div className="space-y-2">
+                <Button
+                  type="button"
+                  onClick={() => void handleApplyGas()}
+                  disabled={!canApplyGas || applyState === "loading"}
+                  className="w-full justify-center"
+                >
+                  {applyState === "loading" ? (
+                    <RefreshCw size={13} className="animate-spin" />
+                  ) : (
+                    <Send size={13} />
+                  )}
+                  {applyState === "loading" ? "Applying…" : "Apply Gas Settings"}
+                </Button>
+
+                {!hasGas && manualG === 0 && (
+                  <p className="text-[11px]" style={{ color: "var(--text-3)" }}>
+                    Waiting for live gas data — or enter a manual gwei override above.
+                  </p>
+                )}
+
+                {applyState === "success" && (
+                  <div className="flex items-center gap-2 rounded-md border border-status-green-border bg-status-green-bg px-3 py-2 text-[12px] text-status-green-text">
+                    <CheckCircle2 size={13} />
+                    Gas settings applied successfully.
+                  </div>
+                )}
+
+                {applyState === "error" && (
+                  <div className="flex items-start gap-2 rounded-md border border-status-red-border bg-status-red-bg px-3 py-2 text-[12px] text-status-red-text">
+                    <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                    {applyError || "Failed to apply settings. Please try again."}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Panel>
         </div>
       </div>
     </AppShell>

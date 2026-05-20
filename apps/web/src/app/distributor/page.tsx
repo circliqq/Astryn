@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Send, XCircle } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { Badge, Button, Input, Panel } from "@/components/ui";
+import { Badge, Button, Input, Panel, Select } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 
 interface Wallet {
@@ -128,26 +128,25 @@ export default function DistributorPage() {
         <Panel>
           <div className="panel-header">
             <div>
-              <p className="text-[14px] font-semibold text-graphite-100">Distribution Plan</p>
-              <p className="mt-0.5 text-[12px] text-graphite-500">Fund multiple wallets from one source wallet.</p>
+              <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Distribution Plan</p>
+              <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>Fund multiple wallets from one source wallet.</p>
             </div>
-            <Send size={17} className="text-graphite-500" />
+            <Send size={17} style={{ color: "var(--text-3)" }} />
           </div>
           <div className="space-y-4 p-5">
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">Sender wallet</span>
-              <select
-                className="h-8 w-full rounded-md border border-graphite-700 bg-graphite-800 px-3 text-[13px] text-graphite-100 outline-none focus:border-brand"
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Sender wallet</span>
+              <Select
                 value={senderWalletId}
                 onChange={(event) => { setSenderWalletId(event.target.value); setSelected([]); setPreview(null); }}
               >
                 {wallets.map((wallet) => (
                   <option key={wallet.id} value={wallet.id}>{wallet.name} - {wallet.network}</option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label>
-              <span className="mb-1 block text-[11px] font-medium text-graphite-400">Amount per recipient</span>
+              <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Amount per recipient</span>
               <Input type="number" min="0" step="any" value={amountEach} onChange={(event) => { setAmountEach(event.target.value); setPreview(null); }} />
             </label>
             <div className="grid grid-cols-2 gap-3">
@@ -177,7 +176,7 @@ export default function DistributorPage() {
 
           <Panel>
             <div className="panel-header">
-              <p className="text-[14px] font-semibold text-graphite-100">Recipient Wallets</p>
+              <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Recipient Wallets</p>
               <Button type="button" variant="ghost" size="sm" onClick={() => setSelected(compatibleRecipients.map((wallet) => wallet.id))}>Select all</Button>
             </div>
             {isLoading ? (
@@ -192,14 +191,17 @@ export default function DistributorPage() {
                     <button
                       key={wallet.id}
                       type="button"
-                      className={`rounded-md border px-3 py-3 text-left transition-colors ${isSelected ? "border-brand bg-brand-bg" : "border-graphite-700 bg-graphite-800 hover:border-graphite-600"}`}
+                      className="rounded-md border px-3 py-3 text-left transition-colors"
+                      style={isSelected
+                        ? { borderColor: "var(--brand)", background: "var(--brand-surface)" }
+                        : { borderColor: "var(--border)", background: "var(--surface-2)" }}
                       onClick={() => toggleWallet(wallet.id)}
                     >
                       <div className="flex items-center justify-between gap-3">
-                        <span className="font-medium text-graphite-100">{wallet.name}</span>
+                        <span className="font-medium" style={{ color: "var(--text-1)" }}>{wallet.name}</span>
                         <Badge tone={isSelected ? "green" : "slate"}>{isSelected ? "Selected" : wallet.network}</Badge>
                       </div>
-                      <p className="mt-1 font-mono text-[11px] text-graphite-500">{wallet.address.slice(0, 12)}...</p>
+                      <p className="mt-1 font-mono text-[11px]" style={{ color: "var(--text-3)" }}>{wallet.address.slice(0, 12)}...</p>
                     </button>
                   );
                 })}
@@ -210,11 +212,11 @@ export default function DistributorPage() {
           {preview && (
             <Panel>
               <div className="panel-header">
-                <p className="text-[14px] font-semibold text-graphite-100">Preview</p>
+                <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Preview</p>
                 <Badge tone={preview.summary.senderCanAfford ? "green" : "red"}>{preview.summary.senderCanAfford ? "Funded" : "Insufficient"}</Badge>
               </div>
-              <div className="p-5 text-[13px] text-graphite-300">
-                Total required: <span className="font-mono text-graphite-100">{preview.summary.totalRequiredEth} ETH</span>
+              <div className="p-5 text-[13px]" style={{ color: "var(--text-2)" }}>
+                Total required: <span className="font-mono" style={{ color: "var(--text-1)" }}>{preview.summary.totalRequiredEth} ETH</span>
               </div>
             </Panel>
           )}
@@ -222,16 +224,16 @@ export default function DistributorPage() {
           {results.length > 0 && (
             <Panel>
               <div className="panel-header">
-                <p className="text-[14px] font-semibold text-graphite-100">Transfer Results</p>
+                <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Transfer Results</p>
               </div>
-              <div className="divide-y divide-graphite-700">
+              <div className="divide-y" style={{ borderColor: "var(--border)" }}>
                 {results.map((result) => (
                   <div key={result.walletId} className="flex items-center justify-between gap-3 px-5 py-3">
                     <div className="flex items-center gap-2">
                       {result.status === "sent" ? <CheckCircle2 size={15} className="text-status-green-text" /> : <XCircle size={15} className="text-status-red-text" />}
-                      <span className="font-mono text-[12px] text-graphite-300">{result.address.slice(0, 12)}...</span>
+                      <span className="font-mono text-[12px]" style={{ color: "var(--text-2)" }}>{result.address.slice(0, 12)}...</span>
                     </div>
-                    <span className="text-[12px] text-graphite-500">{result.error ?? result.txHash}</span>
+                    <span className="text-[12px]" style={{ color: "var(--text-3)" }}>{result.error ?? result.txHash}</span>
                   </div>
                 ))}
               </div>

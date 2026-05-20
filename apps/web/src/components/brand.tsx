@@ -1,10 +1,16 @@
 export function Brand() {
   return (
-    <div className="flex items-center gap-2.5">
-      <span className="grid size-7 shrink-0 place-items-center rounded-md bg-brand text-[13px] font-semibold leading-none text-white">
+    <div className="flex items-center gap-2">
+      <span
+        className="grid size-7 shrink-0 place-items-center rounded-[6px] text-[13px] font-bold leading-none text-white"
+        style={{ background: "var(--brand)" }}
+      >
         A
       </span>
-      <span className="text-[14px] font-semibold tracking-[-0.01em] text-graphite-100">
+      <span
+        className="text-[14px] font-semibold tracking-tight"
+        style={{ color: "var(--text-1)" }}
+      >
         Astryn
       </span>
     </div>

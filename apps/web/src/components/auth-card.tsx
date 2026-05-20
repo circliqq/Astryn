@@ -3,13 +3,36 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Brand } from "./brand";
 import { Button, Input } from "./ui";
 import { apiFetch, setToken } from "@/lib/api";
 
+// ── Logo mark ─────────────────────────────────────────────────────────────
+
+function AuthLogo() {
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <span
+        className="grid size-10 shrink-0 place-items-center rounded-[8px] text-[16px] font-bold leading-none text-white"
+        style={{ background: "var(--brand)" }}
+      >
+        A
+      </span>
+      <span
+        className="text-[16px] font-semibold tracking-tight"
+        style={{ color: "var(--text-1)" }}
+      >
+        Astryn
+      </span>
+    </div>
+  );
+}
+
+// ── AuthCard ──────────────────────────────────────────────────────────────
+
 export function AuthCard({ mode }: { mode: "login" | "register" }) {
   const isLogin = mode === "login";
-  const router = useRouter();
+  const router  = useRouter();
+
   const [email,    setEmail]    = useState("");
   const [password, setPassword] = useState("");
   const [confirm,  setConfirm]  = useState("");
@@ -19,10 +42,16 @@ export function AuthCard({ mode }: { mode: "login" | "register" }) {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    if (!isLogin && password !== confirm) { setError("Passwords do not match."); return; }
+    if (!isLogin && password !== confirm) {
+      setError("Passwords do not match.");
+      return;
+    }
     setLoading(true);
     try {
-      const data = await apiFetch<{ session?: { access_token: string } | null; user?: { id: string } | null }>(
+      const data = await apiFetch<{
+        session?: { access_token: string } | null;
+        user?: { id: string } | null;
+      }>(
         isLogin ? "/auth/login" : "/auth/register",
         { method: "POST", body: JSON.stringify({ email, password }) }
       );
@@ -42,54 +71,77 @@ export function AuthCard({ mode }: { mode: "login" | "register" }) {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center bg-graphite-950 px-4">
+    <main
+      className="min-h-screen flex flex-col items-center justify-center px-4"
+      style={{ background: "var(--bg)" }}
+    >
       <div className="w-full max-w-[380px]">
         {/* Logo */}
-        <div className="mb-8">
-          <Brand />
+        <div className="mb-8 flex justify-center">
+          <AuthLogo />
         </div>
 
         {/* Card */}
-        <div className="panel p-6">
-          <h1 className="text-[17px] font-semibold tracking-[-0.01em] text-graphite-100">
+        <div className="panel p-8">
+          <h1
+            className="text-[22px] font-bold tracking-tight"
+            style={{ color: "var(--text-1)" }}
+          >
             {isLogin ? "Sign in" : "Create account"}
           </h1>
-          <p className="mt-1 text-[12px] text-graphite-500">
+          <p
+            className="mt-1 mb-6 text-[13px]"
+            style={{ color: "var(--text-3)" }}
+          >
             {isLogin
-              ? "Continue to your mint operations console."
+              ? "Access your minting console"
               : "Start with secure auth and encrypted wallet storage."}
           </p>
 
-          <form className="mt-5 space-y-3" onSubmit={handleSubmit}>
+          <form className="space-y-3" onSubmit={handleSubmit}>
             <div>
-              <label className="mb-1 block text-[11px] font-medium text-graphite-400">Email</label>
+              <label
+                className="mb-1.5 block text-[11px] font-medium"
+                style={{ color: "var(--text-2)" }}
+              >
+                Email
+              </label>
               <Input
                 type="email"
                 placeholder="you@example.com"
-                className="w-full"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
               />
             </div>
+
             <div>
-              <label className="mb-1 block text-[11px] font-medium text-graphite-400">Password</label>
+              <label
+                className="mb-1.5 block text-[11px] font-medium"
+                style={{ color: "var(--text-2)" }}
+              >
+                Password
+              </label>
               <Input
                 type="password"
                 placeholder="••••••••"
-                className="w-full"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
               />
             </div>
+
             {!isLogin && (
               <div>
-                <label className="mb-1 block text-[11px] font-medium text-graphite-400">Confirm password</label>
+                <label
+                  className="mb-1.5 block text-[11px] font-medium"
+                  style={{ color: "var(--text-2)" }}
+                >
+                  Confirm password
+                </label>
                 <Input
                   type="password"
                   placeholder="••••••••"
-                  className="w-full"
                   value={confirm}
                   onChange={(e) => setConfirm(e.target.value)}
                   required
@@ -103,19 +155,36 @@ export function AuthCard({ mode }: { mode: "login" | "register" }) {
               </p>
             )}
 
-            <Button className="mt-1 w-full" disabled={loading}>
+            {isLogin && (
+              <div className="flex justify-end">
+                <Link
+                  href="/forgot-password"
+                  className="text-[12px] hover:underline"
+                  style={{ color: "var(--brand)" }}
+                >
+                  Forgot password?
+                </Link>
+              </div>
+            )}
+
+            <Button className="w-full mt-1" disabled={loading}>
               {loading ? "Please wait…" : isLogin ? "Sign in" : "Create account"}
             </Button>
           </form>
         </div>
 
-        <p className="mt-4 text-center text-[12px] text-graphite-500">
-          {isLogin ? "New to Astryn?" : "Already have an account?"}{" "}
+        {/* Footer link */}
+        <p
+          className="mt-5 text-center text-[12px]"
+          style={{ color: "var(--text-3)" }}
+        >
+          {isLogin ? "Don't have an account?" : "Already have an account?"}{" "}
           <Link
-            className="text-brand hover:underline"
             href={isLogin ? "/register" : "/login"}
+            className="font-medium hover:underline"
+            style={{ color: "var(--brand)" }}
           >
-            {isLogin ? "Create account" : "Sign in"}
+            {isLogin ? "Register" : "Sign in"}
           </Link>
         </p>
       </div>

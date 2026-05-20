@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, ExternalLink, Hash, Link2, Radar } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
-import { Badge, Button, Input, Panel } from "@/components/ui";
+import { Badge, Button, Input, Panel, Select } from "@/components/ui";
 import { apiFetch } from "@/lib/api";
 
 interface CollectionPhase {
@@ -98,24 +98,27 @@ export default function ScannerPage() {
         <Panel>
           <div className="panel-header">
             <div>
-              <p className="text-[14px] font-semibold text-graphite-100">Collection Scanner</p>
-              <p className="mt-0.5 text-[12px] text-graphite-500">
+              <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Collection Scanner</p>
+              <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>
                 Inspect collection metadata before creating a mint task.
               </p>
             </div>
-            <Radar size={18} className="text-graphite-500" />
+            <Radar size={18} style={{ color: "var(--text-3)" }} />
           </div>
 
           {/* Mode toggle */}
-          <div className="flex gap-1 rounded-md border border-graphite-700 bg-graphite-800/60 p-1 mx-5 mt-4 w-fit">
+          <div className="flex gap-1 rounded-md p-1 mx-5 mt-4 w-fit" style={{ border: "1px solid var(--border)", background: "var(--surface-2)" }}>
             <button
               type="button"
               onClick={() => { setScanMode("url"); setError(null); setCollection(null); }}
               className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${
                 scanMode === "url"
-                  ? "bg-graphite-700 text-graphite-100"
-                  : "text-graphite-500 hover:text-graphite-300"
+                  ? ""
+                  : ""
               }`}
+              style={scanMode === "url"
+                ? { background: "var(--surface-3)", color: "var(--text-1)" }
+                : { color: "var(--text-3)" }}
             >
               <Link2 size={12} />
               OpenSea URL
@@ -123,11 +126,10 @@ export default function ScannerPage() {
             <button
               type="button"
               onClick={() => { setScanMode("contract"); setError(null); setCollection(null); }}
-              className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${
-                scanMode === "contract"
-                  ? "bg-graphite-700 text-graphite-100"
-                  : "text-graphite-500 hover:text-graphite-300"
-              }`}
+              className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-[12px] font-medium transition-colors`}
+              style={scanMode === "contract"
+                ? { background: "var(--surface-3)", color: "var(--text-1)" }
+                : { color: "var(--text-3)" }}
             >
               <Hash size={12} />
               Contract Address
@@ -137,7 +139,7 @@ export default function ScannerPage() {
           <div className="p-5">
             {scanMode === "url" ? (
               <>
-                <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-graphite-500">
+                <label className="label-caps">
                   Drop or collection URL
                 </label>
                 <div className="mt-3 flex flex-col gap-3 md:flex-row">
@@ -155,7 +157,7 @@ export default function ScannerPage() {
               </>
             ) : (
               <>
-                <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-graphite-500">
+                <label className="label-caps">
                   Contract address
                 </label>
                 <div className="mt-3 flex flex-col gap-3 md:flex-row">
@@ -166,19 +168,18 @@ export default function ScannerPage() {
                     placeholder="0x..."
                     onKeyDown={(e) => e.key === "Enter" && handleScan()}
                   />
-                  <select
+                  <Select
                     value={chain}
                     onChange={(e) => setChain(e.target.value as "ethereum" | "base")}
-                    className="rounded-md border border-graphite-700 bg-graphite-800 px-3 py-2 text-[13px] text-graphite-100 focus:border-brand focus:outline-none"
                   >
                     <option value="ethereum">Ethereum</option>
                     <option value="base">Base</option>
-                  </select>
+                  </Select>
                   <Button type="button" onClick={handleScan} disabled={loading || !canScan}>
                     {loading ? "Scanning..." : "Scan Drop"}
                   </Button>
                 </div>
-                <p className="mt-2 text-[11px] text-graphite-500">
+                <p className="mt-2 text-[11px]" style={{ color: "var(--text-3)" }}>
                   Looks up the collection on OpenSea by contract address — no URL needed.
                 </p>
               </>
@@ -198,11 +199,14 @@ export default function ScannerPage() {
               <div className="grid gap-6 p-5 lg:grid-cols-[1fr_220px]">
                 <div>
                   <div className="flex items-center gap-3">
-                    <div className="grid size-10 place-items-center rounded-md border border-graphite-700 bg-graphite-800 font-mono text-[13px] font-semibold text-graphite-300">
+                    <div
+                      className="grid size-10 place-items-center rounded-md font-mono text-[13px] font-semibold"
+                      style={{ border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)" }}
+                    >
                       {collection.chain === "BASE" ? "B" : "E"}
                     </div>
                     <div>
-                      <h2 className="text-[18px] font-semibold text-graphite-100">{collection.name}</h2>
+                      <h2 className="text-[18px] font-semibold" style={{ color: "var(--text-1)" }}>{collection.name}</h2>
                       <div className="mt-1"><Badge tone="blue">{chainLabel}</Badge></div>
                     </div>
                   </div>
@@ -220,7 +224,7 @@ export default function ScannerPage() {
                     ].map(([label, value]) => (
                       <div key={label}>
                         <p className="label-caps">{label}</p>
-                        <p className="mt-1 text-[13px] font-medium text-graphite-100">{value}</p>
+                        <p className="mt-1 text-[13px] font-medium" style={{ color: "var(--text-1)" }}>{value}</p>
                       </div>
                     ))}
                   </div>
@@ -231,11 +235,14 @@ export default function ScannerPage() {
                   </div>
                 </div>
 
-                <div className="aspect-square overflow-hidden rounded-md border border-graphite-700 bg-graphite-800">
+                <div
+                  className="aspect-square overflow-hidden rounded-md"
+                  style={{ border: "1px solid var(--border)", background: "var(--surface-2)" }}
+                >
                   {collection.imageUrl ? (
                     <img src={collection.imageUrl} alt={collection.name} className="h-full w-full object-cover" />
                   ) : (
-                    <div className="grid h-full place-items-center text-3xl font-black text-graphite-500">
+                    <div className="grid h-full place-items-center text-3xl font-black" style={{ color: "var(--text-3)" }}>
                       {collection.name.slice(0, 3).toUpperCase()}
                     </div>
                   )}

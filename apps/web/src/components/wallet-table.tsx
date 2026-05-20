@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Edit, RefreshCw, Trash2, X } from "lucide-react";
 import { apiFetch } from "@/lib/api";
 import { StatusPill } from "./status-pill";
-import { Badge, Button, Input, Panel } from "./ui";
+import { Badge, Button, Input, Panel, Select } from "./ui";
 
 interface Wallet {
   id: string;
@@ -123,7 +123,7 @@ export function WalletTable({ search, status }: { search: string; status: string
   }
 
   if (isLoading) {
-    return <Panel className="p-6 text-[13px] text-graphite-400">Loading wallets...</Panel>;
+    return <Panel className="p-6 text-[13px]" style={{ color: "var(--text-3)" }}>Loading wallets...</Panel>;
   }
   if (error) {
     return <Panel className="p-6 text-[13px] text-status-red-text">Failed to load wallets.</Panel>;
@@ -132,11 +132,11 @@ export function WalletTable({ search, status }: { search: string; status: string
     return (
       <Panel>
         <div className="flex flex-col items-center px-6 py-12 text-center">
-          <div className="grid size-[52px] place-items-center rounded-full bg-[#1E2028]">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-graphite-500"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>
+          <div className="grid size-[52px] place-items-center rounded-full" style={{ background: "var(--surface-2)" }}>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--text-3)" }}><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg>
           </div>
-          <p className="mt-3 text-[13px] font-medium text-graphite-200">No wallets found</p>
-          <p className="mt-1 text-[12px] text-graphite-500">Import or create a wallet to get started.</p>
+          <p className="mt-3 text-[13px] font-medium" style={{ color: "var(--text-2)" }}>No wallets found</p>
+          <p className="mt-1 text-[12px]" style={{ color: "var(--text-3)" }}>Import or create a wallet to get started.</p>
         </div>
       </Panel>
     );
@@ -151,7 +151,8 @@ export function WalletTable({ search, status }: { search: string; status: string
           </span>
           <button
             type="button"
-            className="text-graphite-400 hover:text-graphite-100"
+            style={{ color: "var(--text-3)" }}
+            className="hover:opacity-80 transition-opacity"
             onClick={() => {
               setNotice(null);
               setActionError(null);
@@ -180,8 +181,8 @@ export function WalletTable({ search, status }: { search: string; status: string
                 return (
                   <tr key={wallet.id}>
                     <td className="font-medium">{wallet.name}</td>
-                    <td className="font-mono text-[11px] text-graphite-400" data-wallet-address>{wallet.address}</td>
-                    <td className="text-graphite-300">
+                    <td className="font-mono text-[11px]" style={{ color: "var(--text-3)" }} data-wallet-address>{wallet.address}</td>
+                    <td style={{ color: "var(--text-2)" }}>
                       {wallet.network === "BASE" ? "Base" : "Ethereum"}
                     </td>
                     <td data-wallet-balance>{fmtEth(wallet.lastBalanceWei)}</td>
@@ -235,11 +236,11 @@ export function WalletTable({ search, status }: { search: string; status: string
 
       {editingWallet && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 px-4">
-          <div className="w-full max-w-md rounded-[10px] border border-graphite-600 bg-graphite-900 p-5">
+          <div className="w-full max-w-md rounded-[10px] border p-5" style={{ background: "var(--surface)", borderColor: "var(--border-2)" }}>
             <div className="flex items-center justify-between gap-3">
               <div>
                 <h2 className="font-semibold">Edit Wallet</h2>
-                <p className="mt-1 font-mono text-xs text-graphite-500" data-wallet-address>{editingWallet.address}</p>
+                <p className="mt-1 font-mono text-xs" style={{ color: "var(--text-3)" }} data-wallet-address>{editingWallet.address}</p>
               </div>
               <Badge tone="blue">{editingWallet.network === "BASE" ? "Base" : "Ethereum"}</Badge>
             </div>
@@ -251,14 +252,13 @@ export function WalletTable({ search, status }: { search: string; status: string
                 onChange={(e) => setEditName(e.target.value)}
                 required
               />
-              <select
-                className="h-8 w-full rounded-md border border-graphite-700 bg-graphite-800 px-3 text-[13px] text-graphite-100 focus:border-brand focus:outline-none"
+              <Select
                 value={editNetwork}
                 onChange={(e) => setEditNetwork(e.target.value as "base" | "ethereum")}
               >
                 <option value="base">Base</option>
                 <option value="ethereum">Ethereum</option>
-              </select>
+              </Select>
               {actionError && <p className="text-[12px] text-status-red-text">{actionError}</p>}
               <div className="flex justify-end gap-2">
                 <Button
