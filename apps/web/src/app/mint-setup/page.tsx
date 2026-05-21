@@ -23,6 +23,7 @@ import { formatDateShort } from "@/lib/format-date";
 import {
   buildGasRecommendation,
   DEFAULT_MINT_GAS_UNITS,
+  ethForGas,
   GAS_PRESETS,
   loadSavedGasSettings,
   type GasMode,
@@ -261,7 +262,19 @@ function MintSetupContent() {
 
   const qty = Math.max(1, Number.parseInt(mintQuantity, 10) || 1);
   const mintPriceEth = selectedPhase ? weiToEth(selectedPhase.priceWei) : 0;
-  const gasCostPerWallet = gasRec?.estimatedGasCostEth ?? 0;
+  const gasCostPerWallet = (() => {
+    if (!gasRec) return 0;
+    if (gasModeExtended === "advanced") {
+      // Advanced mode: calculate estimate using the user's custom gas values,
+      // not the balanced-mode live gasRec. effectiveGwei = min(maxFee, base+priority).
+      const effectiveGwei = Math.min(
+        advancedGas.maxFeeGwei,
+        gasRec.liveBaseGwei + advancedGas.priorityFeeGwei
+      );
+      return Math.max(0, ethForGas(gasRec.estimatedGasUnits, effectiveGwei));
+    }
+    return Math.max(0, gasRec.estimatedGasCostEth);
+  })();
   const totalCostPerWallet = (mintPriceEth + gasCostPerWallet) * qty;
   const grandTotal = totalCostPerWallet * Math.max(1, selectedWalletIds.length);
 

@@ -449,8 +449,21 @@ export async function executeMintTask(
               warningsJson: readiness.warnings,
             },
           });
-          if (readiness.blockers.length > 0) {
-            throw new Error(readiness.blockers.join(" "));
+          // Simulation failures at pre-arm time are EXPECTED — the mint contract
+          // rejects calls before the phase opens. The readiness score still records
+          // simulationFailed as a blocker (so the UI score reflects it), but we
+          // must NOT throw on it here.  waitWithRollingSimulation() will poll
+          // every few seconds and re-run simulation as T=0 approaches; the
+          // last-chance check at T=0 is the authoritative execution gate.
+          //
+          // Only throw on hard blockers that cannot self-resolve:
+          //   - walletFunded  → wallet doesn't have enough ETH (won't fix itself)
+          //   - eligible      → wallet is not on the allowlist
+          //   - gasUnderCap   → estimated cost exceeds configured cap
+          const SIM_BLOCKER = "Simulation failed, so the transaction will not be sent.";
+          const hardBlockers = readiness.blockers.filter((b) => b !== SIM_BLOCKER);
+          if (hardBlockers.length > 0) {
+            throw new Error(hardBlockers.join(" "));
           }
 
           const privateKey = await decryptPrivateKey(
@@ -746,7 +759,7 @@ export async function executeMintTask(
     // Polls totalSupply() on the NFT contract every 300ms after broadcast.
     // If supply exhausted, replaces each pending mint tx with a cheap self-transfer
     // (same nonce, higher gas) so the mint tx is dropped and gas is saved.
-    const contractAddress = task.collection.contractAddress as `0x${string}`;
+    // Note: contractAddress and knownMaxSupply are hoisted above (pre-broadcast supply check).
     const supplyCheckEnabled = /^(1|true|yes)$/i.test(
       process.env["MINT_SUPPLY_WATCH_ENABLED"] ?? "true",
     );
@@ -754,11 +767,6 @@ export async function executeMintTask(
 
     // Shared cancellation signal — flipped when supply = 0 detected.
     let supplyExhausted = false;
-
-    // Prefer stage max supply from OpenSea (avoids contract RPC call).
-    // Falls back to on-chain maxSupply() if not available from pre-arm.
-    const knownMaxSupply: bigint | null =
-      broadcasted.find((b) => b.stageMaxSupply != null)?.stageMaxSupply ?? null;
 
     const watchSupply = async () => {
       if (!supplyCheckEnabled) return;
@@ -793,10 +801,59 @@ export async function executeMintTask(
           void log(prisma, task.id, "warn",
             `Supply exhausted on-chain (${totalSupply}/${maxSupply}) — cancelling pending mint txs to save gas.`,
           ).catch(() => undefined);
+          // Fire cancel txs immediately — don't wait for the bump loop's next-block trigger.
+          // On ETH that gate adds ~12s, by which point the mint tx may already be mined.
+          void cancelAllPending().catch(() => undefined);
         }
       } catch {
         // non-fatal — supply check best-effort only
       }
+    };
+
+    // Shared state so supply watcher can cancel with the latest bumped fees.
+    // Updated by each wallet's bump loop whenever gas is bumped.
+    const activeMintByWallet = new Map<string, BroadcastedMint>(
+      broadcasted.map((b) => [b.walletId, b]),
+    );
+    // Tracks which wallets have already had a cancel tx sent (avoid duplicates).
+    const cancelledWallets = new Set<string>();
+
+    // Immediately cancel all still-pending mints — called by supply watcher as
+    // soon as exhaustion is detected, without waiting for the bump loop's block wait.
+    const cancelAllPending = async () => {
+      await Promise.all(
+        [...activeMintByWallet.entries()].map(async ([walletId, mint]) => {
+          if (cancelledWallets.has(walletId)) return;
+          cancelledWallets.add(walletId);
+          try {
+            const privateKey = await decryptPrivateKey(
+              mint.walletCrypto,
+              { masterKey: env("ENCRYPTION_MASTER_KEY") },
+            );
+            const cancelTx = await signTransaction(
+              { chainName: network, rpcUrl: primary.url },
+              privateKey,
+              {
+                to: mint.walletAddress,
+                data: "0x",
+                value: 0n,
+                gas: 21_000n,
+                nonce: mint.nonce,
+                // 120% of latest maxFee to outbid the mint tx (including any bumped fees).
+                maxFeePerGas: (mint.maxFeePerGas * 120n) / 100n,
+                maxPriorityFeePerGas: (mint.maxPriorityFeePerGas * 120n) / 100n,
+              },
+            );
+            await pool.broadcastUntilAccepted(network, cancelTx);
+            void log(prisma, task.id, "warn",
+              `Cancelled mint tx for wallet ${shortAddress(mint.walletAddress)} — supply exhausted.`,
+              { nonce: mint.nonce, walletId },
+            ).catch(() => undefined);
+          } catch {
+            // cancel attempt failed — let receipt timeout handle it
+          }
+        }),
+      );
     };
 
     // Poll supply until exhausted or all receipts received.
@@ -838,36 +895,10 @@ export async function executeMintTask(
               await waitForNextBlock(network, bumpDeadline);
               if (Date.now() >= bumpDeadline) break;
 
-              // If supply exhausted — cancel the pending tx instead of bumping.
-              // Send a cheap self-transfer with the same nonce to replace the mint tx.
+              // If supply exhausted — cancel was already sent by the supply watcher
+              // immediately when exhaustion was detected (no block-time delay).
+              // Just break so we stop bumping and move on to waitForAnyReceipt.
               if (supplyExhausted) {
-                try {
-                  const privateKey = await decryptPrivateKey(
-                    activeMint.walletCrypto,
-                    { masterKey: env("ENCRYPTION_MASTER_KEY") },
-                  );
-                  const cancelTx = await signTransaction(
-                    { chainName: network, rpcUrl: primary.url },
-                    privateKey,
-                    {
-                      to: activeMint.walletAddress,
-                      data: "0x",
-                      value: 0n,
-                      gas: 21_000n,
-                      nonce: activeMint.nonce,
-                      // 120% of current maxFee to outbid the mint tx.
-                      maxFeePerGas: (activeMint.maxFeePerGas * 120n) / 100n,
-                      maxPriorityFeePerGas: (activeMint.maxPriorityFeePerGas * 120n) / 100n,
-                    },
-                  );
-                  await pool.broadcastUntilAccepted(network, cancelTx);
-                  void log(prisma, task.id, "warn",
-                    `Cancelled mint tx for wallet ${shortAddress(activeMint.walletAddress)} — supply exhausted.`,
-                    { nonce: activeMint.nonce, walletId: activeMint.walletId },
-                  ).catch(() => undefined);
-                } catch {
-                  // cancel attempt failed — let receipt timeout handle it
-                }
                 break;
               }
 
@@ -950,6 +981,9 @@ export async function executeMintTask(
                     // Track all bumped hashes — any of them may land.
                     allHashes: [...activeMint.allHashes, bumpSuccess.hash],
                   };
+                  // Keep the supply watcher's cancel map in sync with the latest fees.
+                  // If exhaustion fires mid-bump, the cancel will use the current maxFee.
+                  activeMintByWallet.set(activeMint.walletId, activeMint);
                 }
               } catch {
                 break; // bump limit reached or signing failed — stop bumping
@@ -1354,7 +1388,9 @@ async function waitWithRollingSimulation(
   options: { chainName: "base" | "ethereum"; rpcUrl: string },
   primaryLatencyMs: number | null = null,
 ): Promise<PreparedMint[]> {
-  const pollIntervalMs = numberEnv("MINT_SIM_POLL_INTERVAL_MS", 5_000);
+  // 1 s default — catches contract opening within a second of it going live.
+  // Increase via MINT_SIM_POLL_INTERVAL_MS if your RPC tier is rate-limited.
+  const pollIntervalMs = numberEnv("MINT_SIM_POLL_INTERVAL_MS", 1_000);
   const lastChanceTimeoutMs = numberEnv("MINT_SIM_LAST_CHANCE_TIMEOUT_MS", 400);
 
   // Track which wallets still need simulation to pass.
