@@ -1,0 +1,12 @@
+{
+  "name": "allowlist-checker",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Standalone tool to check eligible address count for FCFS/GTD phases from any NFT contract",
+  "scripts": {
+    "check": "node check.mjs"
+  },
+  "dependencies": {
+    "viem": "^2.22.17"
+  }
+}

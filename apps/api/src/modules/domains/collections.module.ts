@@ -3,6 +3,7 @@ import { ConfigService } from "@nestjs/config";
 import { MintPhaseType } from "@prisma/client";
 import { IsArray, IsIn, IsOptional, IsString } from "class-validator";
 import { OpenSeaClient, type DropPhase } from "@mint-copilot/opensea";
+import { getAllowListInfo } from "@mint-copilot/blockchain";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -288,6 +289,84 @@ class CollectionsController {
     return this.prisma.collection.findUniqueOrThrow({ where: { id }, include: collectionInclude });
   }
 
+  @Get(":id/allowlist-info")
+  async allowlistInfo(@Param("id") id: string) {
+    const collection = await this.prisma.collection.findUniqueOrThrow({
+      where: { id },
+      select: { id: true, slug: true, contractAddress: true, chain: true }
+    });
+
+    if (!collection.contractAddress) {
+      throw new BadRequestException("Collection has no contract address. Rescan it first.");
+    }
+
+    const network = collection.chain === "BASE" ? "base" : "ethereum";
+    const rpcUrl = this.config.getOrThrow<string>(
+      network === "base" ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY"
+    );
+
+    // ── Source 1: SeaDrop contract → getAllowListData ─────────────────────────
+    let contractResult: { merkleRoot: string; allowListURI: string; addresses: string[]; count: number } | null = null;
+    try {
+      contractResult = await getAllowListInfo(
+        { chainName: network, rpcUrl },
+        collection.contractAddress as `0x${string}`
+      );
+    } catch {
+      // Contract call failed — fall through to OpenSea
+    }
+
+    // ── Source 2: OpenSea allowlist endpoint (fallback / supplemental) ────────
+    let openSeaCount: number | null = null;
+    let openSeaAddresses: string[] = [];
+    try {
+      const client = new OpenSeaClient({ apiKey: this.config.getOrThrow<string>("OPENSEA_API_KEY") });
+      // Use the internal allowlist fetch the client already supports
+      const endpoints = [
+        `/drops/${collection.slug}/allowlist?limit=10000`,
+        `/drops/${collection.slug}/allowlist`,
+        `/chain/${network}/contract/${collection.contractAddress}/drops/allowlist?limit=10000`,
+      ];
+      for (const ep of endpoints) {
+        try {
+          // @ts-expect-error — accessing private request method for internal use
+          const data = await (client as unknown as { request: <T>(path: string) => Promise<T> }).request<Record<string, unknown>>(ep);
+          const addrs = extractOpenSeaAddresses(data);
+          if (addrs.length > 0) {
+            openSeaAddresses = addrs;
+            openSeaCount = addrs.length;
+            break;
+          }
+        } catch { /* try next */ }
+      }
+    } catch { /* OpenSea unavailable */ }
+
+    // Merge: prefer contract source (has URI + merkle root), use OpenSea count if contract had no addresses
+    const addresses = contractResult?.addresses.length
+      ? contractResult.addresses
+      : openSeaAddresses;
+
+    const count = addresses.length || openSeaCount || contractResult?.count || 0;
+
+    return {
+      collectionId: collection.id,
+      contractAddress: collection.contractAddress,
+      merkleRoot: contractResult?.merkleRoot ?? null,
+      allowListURI: contractResult?.allowListURI ?? null,
+      eligibleAddressCount: count,
+      addresses: addresses.slice(0, 500), // cap response size — full list in allowListURI
+      hasMoreAddresses: addresses.length > 500,
+      source: contractResult?.allowListURI
+        ? "contract+uri"
+        : openSeaCount !== null
+          ? "opensea"
+          : contractResult
+            ? "contract-root-only"
+            : "unavailable",
+      checkedAt: new Date().toISOString()
+    };
+  }
+
   @Get(":id/market-summary")
   async marketSummary(@Param("id") id: string) {
     const collection = await this.prisma.collection.findUniqueOrThrow({
@@ -402,4 +481,23 @@ function normalizeContractAddress(raw: string): string | null {
   const trimmed = raw.trim();
   if (/^0x[0-9a-fA-F]{40}$/.test(trimmed)) return trimmed.toLowerCase();
   return null;
+}
+
+function extractOpenSeaAddresses(data: Record<string, unknown>): string[] {
+  const candidates = [
+    data.addresses, data.wallets, data.allowlist, data.entries,
+    data.minters, data.eligible_addresses, data.eligible_wallets
+  ];
+  for (const c of candidates) {
+    if (Array.isArray(c) && c.length > 0) {
+      const addrs = c.map((item: unknown) =>
+        typeof item === "string" ? item :
+        typeof item === "object" && item !== null
+          ? String((item as Record<string, unknown>).address ?? (item as Record<string, unknown>).wallet ?? "")
+          : ""
+      ).filter((a: string) => /^0x[a-fA-F0-9]{40}$/.test(a));
+      if (addrs.length > 0) return addrs;
+    }
+  }
+  return [];
 }

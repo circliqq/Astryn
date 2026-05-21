@@ -1254,10 +1254,70 @@ async function loadMintPayload(
     const msUntilOpen = targetAt.getTime() - Date.now();
     if (msUntilOpen <= 1_000) throw error;
 
+    // ── Pre-open payload polling ──────────────────────────────────────────
+    // Instead of sleeping until T=0 and retrying once (old behaviour), we
+    // poll OpenSea every MINT_PAYLOAD_POLL_INTERVAL_MS while there is still
+    // time before phase open.  If OpenSea releases the payload early — common
+    // for FCFS/GTD phases where the signed mint data becomes available a few
+    // seconds before the phase timestamp — we return immediately.
+    //
+    // This matters because a wallet that finishes prep BEFORE T=0:
+    //   • is included in the pre-refresh nonce loop (T - refreshLeadMs)
+    //   • broadcasts at T=0 with zero API latency overhead
+    //
+    // A wallet that still needs a T=0 retry:
+    //   • adds a full OpenSea round-trip on the hot path (~100-500ms+)
+    //   • may find supply exhausted by the time it broadcasts (EBISU case)
+    //
+    // MINT_PAYLOAD_POLL_INTERVAL_MS  — how often to poll  (default 3 000ms)
+    // pollCutoffMs                   — stop polling this far before open so a
+    //                                  slow API call cannot bleed into T=0.
+    //                                  Set to pollInterval + 500ms as buffer.
+    const pollIntervalMs = numberEnv("MINT_PAYLOAD_POLL_INTERVAL_MS", 3_000);
+    const pollCutoffMs   = pollIntervalMs + 500;
+    const openSeaPhaseStr = toOpenSeaPhase(phaseType);
+
     await warn(
-      `Mint payload for ${shortAddress(walletAddress)} is not available before open; retrying at target time.`,
-      { rawError: rawErrorMessage(error), targetAt: targetAt.toISOString() },
+      `Mint payload for ${shortAddress(walletAddress)} not yet available — polling every ${pollIntervalMs}ms until T-${pollCutoffMs}ms.`,
+      { rawError: rawErrorMessage(error), targetAt: targetAt.toISOString(), pollIntervalMs },
     );
+
+    // Each poll attempt is raced against a per-call timeout so a hung OpenSea
+    // connection cannot push execution past T=0.
+    const pollAttemptTimeoutMs = Math.min(pollIntervalMs - 200, 4_800);
+
+    while (Date.now() < targetAt.getTime() - pollCutoffMs) {
+      const msLeft = targetAt.getTime() - Date.now() - pollCutoffMs;
+      if (msLeft <= 0) break;
+
+      // Wait for the next poll window (or less if we are close to the cutoff).
+      await delay(Math.min(pollIntervalMs, msLeft));
+
+      if (Date.now() >= targetAt.getTime() - pollCutoffMs) break;
+
+      try {
+        // Race the API call against a hard timeout so a slow response cannot
+        // push us past the cutoff window.
+        const polled = await Promise.race<ReturnType<typeof openSea.getMintPayload> | null>([
+          openSea.getMintPayload(collection.slug, walletAddress, quantity, openSeaPhaseStr),
+          delay(pollAttemptTimeoutMs).then(() => null),
+        ]);
+
+        if (polled) {
+          await warn(
+            `Mint payload for ${shortAddress(walletAddress)} obtained ${Math.round((targetAt.getTime() - Date.now()) / 1_000)}s before phase open — will broadcast at T=0 with no API latency.`,
+            { phaseType },
+          );
+          return polled;
+        }
+      } catch {
+        // Payload not yet available — continue polling.
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
+    // Polling window closed (< pollCutoffMs until open).
+    // Fall back to the original T=0 retry path.
     await sleepUntil(targetAt);
 
     const refreshedEligibility = await openSea

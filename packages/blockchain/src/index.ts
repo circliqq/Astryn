@@ -38,6 +38,103 @@ export type MintTransactionRequest = TransactionRequest & {
 export const SEA_DROP_ADDRESS = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5";
 export const OPENSEA_FEE_RECIPIENT = "0x0000a26b00c1F0DF003000390027140000fAa719";
 
+const seaDropReadAbi = [
+  {
+    type: "function",
+    name: "getAllowListData",
+    stateMutability: "view",
+    inputs: [{ name: "nftContract", type: "address" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "merkleRoot", type: "bytes32" },
+          { name: "publicKeyURIs", type: "string[]" },
+          { name: "allowListURI", type: "string" }
+        ]
+      }
+    ]
+  }
+] as const;
+
+export interface AllowListInfo {
+  merkleRoot: string;
+  allowListURI: string;
+  addresses: string[];
+  count: number;
+}
+
+/**
+ * Fetch the allowlist for a SeaDrop collection.
+ * 1. Calls getAllowListData on the SeaDrop contract to get the allowListURI.
+ * 2. Fetches that URI (IPFS / HTTPS) to extract individual addresses.
+ * Returns merkleRoot, URI, addresses array, and count.
+ */
+export async function getAllowListInfo(
+  options: BlockchainClientOptions,
+  nftContract: Address,
+  seaDropAddress: Address = SEA_DROP_ADDRESS
+): Promise<AllowListInfo> {
+  const client = createMintPublicClient(options);
+
+  const result = await client.readContract({
+    address: seaDropAddress,
+    abi: seaDropReadAbi,
+    functionName: "getAllowListData",
+    args: [getAddress(nftContract)]
+  });
+
+  const merkleRoot = result.merkleRoot as string;
+  const allowListURI = result.allowListURI as string;
+
+  if (!allowListURI) {
+    return { merkleRoot, allowListURI: "", addresses: [], count: 0 };
+  }
+
+  // Resolve IPFS URIs to an HTTP gateway
+  const fetchUrl = allowListURI.startsWith("ipfs://")
+    ? allowListURI.replace("ipfs://", "https://ipfs.io/ipfs/")
+    : allowListURI;
+
+  let addresses: string[] = [];
+  try {
+    const res = await fetch(fetchUrl, { signal: AbortSignal.timeout(10_000) });
+    if (res.ok) {
+      const data = await res.json() as unknown;
+      addresses = extractAllowListAddresses(data);
+    }
+  } catch {
+    // URI fetch failed — return what we have from the contract
+  }
+
+  return { merkleRoot, allowListURI, addresses, count: addresses.length };
+}
+
+function extractAllowListAddresses(data: unknown): string[] {
+  if (Array.isArray(data)) {
+    // Flat array of address strings
+    const flat = data
+      .map((item) =>
+        typeof item === "string" ? item :
+        typeof item === "object" && item !== null ? String((item as Record<string, unknown>).address ?? (item as Record<string, unknown>).wallet ?? "") : ""
+      )
+      .filter((a) => /^0x[a-fA-F0-9]{40}$/.test(a));
+    if (flat.length > 0) return [...new Set(flat)];
+  }
+  if (typeof data === "object" && data !== null) {
+    const obj = data as Record<string, unknown>;
+    // Merkle tree format: { merkleRoot, entries: [{address, ...}] }
+    for (const key of ["entries", "addresses", "wallets", "allowlist", "minters", "leaves"]) {
+      if (Array.isArray(obj[key])) {
+        const addrs = extractAllowListAddresses(obj[key]);
+        if (addrs.length > 0) return addrs;
+      }
+    }
+  }
+  return [];
+}
+
 const seaDropAbi = [
   {
     type: "function",
