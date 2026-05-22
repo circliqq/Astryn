@@ -1654,20 +1654,41 @@ async function waitWithRollingSimulation(
               { walletId: p.walletId },
             );
           } catch (error) {
-            skippedIds.add(p.taskWalletId);
-            await log(
-              prisma,
-              mintTaskId,
-              "error",
-              `Simulation still failing for wallet ${shortAddress(p.walletAddress)} at phase open. Skipping broadcast to avoid gas loss.`,
-              { walletId: p.walletId, rawError: rawErrorMessage(error) },
-            );
-            await prisma.mintTaskWallet
-              .update({
-                where: { id: p.taskWalletId },
-                data: { status: "failed", errorCode: "SIMULATION_REJECTED", progress: 100 },
-              })
-              .catch(() => undefined);
+            const rawErr = rawErrorMessage(error);
+            const forceBroadcast = process.env.MINT_FORCE_BROADCAST_ON_SIM_FAILURE === "true";
+            if (forceBroadcast) {
+              console.warn(
+                `[GasWar] ⚠ Simulation failed for ${p.walletAddress} — force-broadcasting anyway.\n` +
+                `  Raw error: ${rawErr}`,
+              );
+              await log(
+                prisma,
+                mintTaskId,
+                "warn",
+                `Simulation still failing for wallet ${shortAddress(p.walletAddress)} at phase open — MINT_FORCE_BROADCAST_ON_SIM_FAILURE is enabled, broadcasting anyway. TX may revert.`,
+                { walletId: p.walletId, rawError: rawErr },
+              );
+            } else {
+              console.error(
+                `[GasWar] ✖ Simulation rejected for ${p.walletAddress} — skipping broadcast.\n` +
+                `  Raw error: ${rawErr}\n` +
+                `  Tip: set MINT_FORCE_BROADCAST_ON_SIM_FAILURE=true to broadcast anyway.`,
+              );
+              skippedIds.add(p.taskWalletId);
+              await log(
+                prisma,
+                mintTaskId,
+                "error",
+                `Simulation still failing for wallet ${shortAddress(p.walletAddress)} at phase open. Skipping broadcast to avoid gas loss.`,
+                { walletId: p.walletId, rawError: rawErr },
+              );
+              await prisma.mintTaskWallet
+                .update({
+                  where: { id: p.taskWalletId },
+                  data: { status: "failed", errorCode: "SIMULATION_REJECTED", progress: 100 },
+                })
+                .catch(() => undefined);
+            }
           }
         }),
     );

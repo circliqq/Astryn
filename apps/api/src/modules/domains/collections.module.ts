@@ -329,7 +329,6 @@ class CollectionsController {
       ];
       for (const ep of endpoints) {
         try {
-          // @ts-expect-error — accessing private request method for internal use
           const data = await (client as unknown as { request: <T>(path: string) => Promise<T> }).request<Record<string, unknown>>(ep);
           const addrs = extractOpenSeaAddresses(data);
           if (addrs.length > 0) {
