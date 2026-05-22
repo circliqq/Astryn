@@ -402,6 +402,54 @@ export async function estimateMintGas(
   return createMintPublicClient(options).estimateGas(request);
 }
 
+const GET_PUBLIC_DROP_ABI = [
+  {
+    type: "function",
+    name: "getPublicDrop",
+    stateMutability: "view",
+    inputs: [{ name: "nftContract", type: "address" }],
+    outputs: [
+      {
+        name: "",
+        type: "tuple",
+        components: [
+          { name: "mintPrice", type: "uint80" },
+          { name: "startTime", type: "uint48" },
+          { name: "endTime", type: "uint48" },
+          { name: "maxTotalMintableByWallet", type: "uint16" },
+          { name: "feeBps", type: "uint16" },
+          { name: "restrictFeeRecipients", type: "bool" },
+        ],
+      },
+    ],
+  },
+] as const;
+
+/**
+ * Fetches the on-chain SeaDrop public phase start time for an NFT contract.
+ * Returns null if the contract does not implement getPublicDrop or the call fails.
+ * Use this to verify/correct the OpenSea API startTime before scheduling.
+ */
+export async function fetchSeaDropPublicStartTime(
+  options: BlockchainClientOptions,
+  seaDropAddress: string,
+  nftContract: string,
+): Promise<Date | null> {
+  try {
+    const client = createMintPublicClient(options);
+    const drop = await client.readContract({
+      address: getAddress(seaDropAddress),
+      abi: GET_PUBLIC_DROP_ABI,
+      functionName: "getPublicDrop",
+      args: [getAddress(nftContract)],
+    });
+    if (!drop.startTime) return null;
+    return new Date(Number(drop.startTime) * 1000);
+  } catch {
+    return null;
+  }
+}
+
 export async function simulateTx(options: BlockchainClientOptions, request: MintTransactionRequest) {
   const client = createMintPublicClient(options);
   await client.call({

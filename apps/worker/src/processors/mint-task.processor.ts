@@ -6,6 +6,8 @@ import {
   createSeaDropPublicMintPayload,
   createSeaDropSignedMintPayload,
   createMintPublicClient,
+  fetchSeaDropPublicStartTime,
+  SEA_DROP_ADDRESS,
   signTransaction,
   simulateTx,
   waitForReceipt,
@@ -165,7 +167,39 @@ export async function executeMintTask(
       wallets: { include: { wallet: true } },
     },
   });
-  const targetAt = resolveTargetAt(job.data.runAt, task.scheduledAt);
+  let targetAt = resolveTargetAt(job.data.runAt, task.scheduledAt);
+
+  // ── On-chain phase time verification ────────────────────────────────────
+  // OpenSea API start times can differ from the real on-chain SeaDrop startTime
+  // by seconds to minutes. Fetch the authoritative on-chain time and use the
+  // earlier of the two so we don't arrive late to the actual phase open.
+  if (task.collection.contractAddress && task.phaseType === "PUBLIC") {
+    try {
+      const network = task.collection.chain === "BASE" ? "base" : "ethereum";
+      const rpcUrl = rpcUrlsFor(network)[0];
+      if (rpcUrl) {
+        const onChainStartTime = await fetchSeaDropPublicStartTime(
+          { chainName: network, rpcUrl },
+          SEA_DROP_ADDRESS,
+          task.collection.contractAddress,
+        );
+        if (onChainStartTime) {
+          const delta = onChainStartTime.getTime() - targetAt.getTime();
+          if (Math.abs(delta) > 500) {
+            // Use whichever is earlier — ensures we don't miss the real open.
+            const adjusted = delta < 0 ? onChainStartTime : targetAt;
+            await log(prisma, task.id, "info",
+              `On-chain SeaDrop startTime differs from OpenSea API by ${Math.round(delta / 1000)}s. ` +
+              `Adjusting targetAt from ${targetAt.toISOString()} → ${adjusted.toISOString()}.`
+            );
+            targetAt = adjusted;
+          }
+        }
+      }
+    } catch { /* non-fatal — proceed with OpenSea API time */ }
+  }
+  // ────────────────────────────────────────────────────────────────────────
+
   const preArmMs = targetAt.getTime() - Date.now();
 
   await log(
@@ -1730,6 +1764,11 @@ async function waitWithRollingSimulation(
               if (resSigned[0]) Object.assign(p, resSigned[0]);
               skippedIds.delete(p.taskWalletId);
               passedDuringWait.add(p.taskWalletId);
+              // Clear the SIMULATION_REJECTED status set by the last-chance check.
+              await prisma.mintTaskWallet.update({
+                where: { id: p.taskWalletId },
+                data: { status: "pending", errorCode: null, progress: 50 },
+              }).catch(() => undefined);
               await log(
                 prisma,
                 mintTaskId,
