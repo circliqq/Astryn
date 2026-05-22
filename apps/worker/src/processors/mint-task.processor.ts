@@ -563,6 +563,20 @@ export async function executeMintTask(
     // (MINT_SIM_LAST_CHANCE_TIMEOUT_MS). If still failing they are skipped —
     // no broadcast, no gas wasted.  Wallets that already passed simulation
     // skip all of this and broadcast immediately at T=0 with zero delay.
+    // For PUBLIC phase, provide a payload refresher so the rolling simulation
+    // can fetch the correct calldata from OpenSea once the phase opens.
+    // This handles collections that use a non-SeaDrop-v1 drop contract where
+    // the pre-built SeaDrop v1 payload would always revert.
+    const payloadRefresher = task.phaseType === "PUBLIC"
+      ? async (walletAddress: string) =>
+          openSea.getMintPayload(
+            task.collection.slug,
+            walletAddress,
+            task.mintQuantity ?? 1,
+            "PUBLIC",
+          )
+      : undefined;
+
     const simulationVerified = await waitWithRollingSimulation(
       prisma,
       task.id,
@@ -570,6 +584,7 @@ export async function executeMintTask(
       targetAt,
       { chainName: network, rpcUrl: primary.url },
       primaryLatencyMs,
+      payloadRefresher,
     );
 
     if (simulationVerified.length === 0) {
@@ -1221,6 +1236,15 @@ async function loadMintPayload(
   warn: (message: string, contextJson?: unknown) => Promise<void>,
 ): Promise<MintPayload> {
   if (phaseType === "PUBLIC") {
+    // Try OpenSea API first — it returns the correct calldata for ANY drop system
+    // (SeaDrop v1, v2, or custom clone). If the API rejects because the phase is
+    // not open yet, fall back to the SeaDrop v1 path so pre-open simulation can
+    // still run (it will fail as expected; SIM_BLOCKER / rolling sim handles it).
+    try {
+      return await openSea.getMintPayload(collection.slug, walletAddress, quantity, "PUBLIC");
+    } catch {
+      // Phase not open yet or API unavailable — fall through to SeaDrop v1 fallback.
+    }
     return createSeaDropPublicMintPayload({
       nftContract: collection.contractAddress as `0x${string}`,
       minter: walletAddress as `0x${string}`,
@@ -1447,6 +1471,7 @@ async function waitWithRollingSimulation(
   targetAt: Date,
   options: { chainName: "base" | "ethereum"; rpcUrl: string },
   primaryLatencyMs: number | null = null,
+  payloadRefresher?: (walletAddress: string) => Promise<MintPayload>,
 ): Promise<PreparedMint[]> {
   // 1 s default — catches contract opening within a second of it going live.
   // Increase via MINT_SIM_POLL_INTERVAL_MS if your RPC tier is rate-limited.
@@ -1484,11 +1509,29 @@ async function waitWithRollingSimulation(
         prepared
           .filter((p) => stillFailing.has(p.taskWalletId))
           .map(async (p) => {
+            let passed = false;
             try {
               await simulateTx(options, {
                 account: p.walletAddress,
                 ...p.mintPayloadForRetry,
               });
+              passed = true;
+            } catch {
+              // Stored payload failed — try fresh payload from OpenSea if available.
+              // This handles collections that use a different SeaDrop version and
+              // only return a valid payload once the phase actually opens.
+              if (payloadRefresher) {
+                try {
+                  const freshPayload = await payloadRefresher(p.walletAddress);
+                  await simulateTx(options, { account: p.walletAddress, ...freshPayload });
+                  p.mintPayloadForRetry = freshPayload; // update in place — carried into refreshSignatures via spread
+                  passed = true;
+                } catch {
+                  // Still pre-open or not yet accepted — keep polling.
+                }
+              }
+            }
+            if (passed) {
               stillFailing.delete(p.taskWalletId);
               passedDuringWait.add(p.taskWalletId);
               await log(
@@ -1498,8 +1541,6 @@ async function waitWithRollingSimulation(
                 `Simulation now passing for wallet ${shortAddress(p.walletAddress)} — will broadcast at phase open with no delay.`,
                 { walletId: p.walletId },
               );
-            } catch {
-              // Still pre-open or not yet accepted — keep polling.
             }
           }),
       );
@@ -1570,6 +1611,22 @@ async function waitWithRollingSimulation(
       resigned
         .filter((p) => stillFailing.has(p.taskWalletId))
         .map(async (p) => {
+          // If we have a payload refresher (e.g. OpenSea API), attempt to fetch
+          // a fresh payload now that the phase is open. This handles collections
+          // that use a different SeaDrop version — the API only returns valid
+          // calldata once the phase goes live.
+          if (payloadRefresher) {
+            try {
+              const freshPayload = await Promise.race([
+                payloadRefresher(p.walletAddress),
+                delay(lastChanceTimeoutMs).then(() => { throw new Error("payload refresh timeout"); }),
+              ]);
+              p.mintPayloadForRetry = freshPayload;
+            } catch {
+              // Refresher failed or timed out — proceed with stored payload.
+            }
+          }
+
           try {
             await Promise.race([
               simulateTx(options, { account: p.walletAddress, ...p.mintPayloadForRetry }),
