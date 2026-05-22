@@ -169,10 +169,11 @@ export async function executeMintTask(
   });
   let targetAt = resolveTargetAt(job.data.runAt, task.scheduledAt);
 
-  // ── On-chain phase time verification ────────────────────────────────────
+  // ── On-chain phase time (authoritative source) ───────────────────────────
   // OpenSea API start times can differ from the real on-chain SeaDrop startTime
-  // by seconds to minutes. Fetch the authoritative on-chain time and use the
-  // earlier of the two so we don't arrive late to the actual phase open.
+  // by seconds to minutes. Always prefer the on-chain time — it is the exact
+  // value the contract checks against, so targeting it eliminates timing drift.
+  // Falls back to the OpenSea API time only if the on-chain call fails.
   if (task.collection.contractAddress && task.phaseType === "PUBLIC") {
     try {
       const network = task.collection.chain === "BASE" ? "base" : "ethereum";
@@ -186,14 +187,20 @@ export async function executeMintTask(
         if (onChainStartTime) {
           const delta = onChainStartTime.getTime() - targetAt.getTime();
           if (Math.abs(delta) > 500) {
-            // Use whichever is earlier — ensures we don't miss the real open.
-            const adjusted = delta < 0 ? onChainStartTime : targetAt;
             await log(prisma, task.id, "info",
               `On-chain SeaDrop startTime differs from OpenSea API by ${Math.round(delta / 1000)}s. ` +
-              `Adjusting targetAt from ${targetAt.toISOString()} → ${adjusted.toISOString()}.`
+              `Using on-chain time: ${onChainStartTime.toISOString()} (was ${targetAt.toISOString()}).`
             );
-            targetAt = adjusted;
+          } else {
+            await log(prisma, task.id, "info",
+              `On-chain SeaDrop startTime confirmed: ${onChainStartTime.toISOString()}.`
+            );
           }
+          targetAt = onChainStartTime;
+        } else {
+          await log(prisma, task.id, "info",
+            `On-chain SeaDrop startTime not available — using OpenSea API time: ${targetAt.toISOString()}.`
+          );
         }
       }
     } catch { /* non-fatal — proceed with OpenSea API time */ }
