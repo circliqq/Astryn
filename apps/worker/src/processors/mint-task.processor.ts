@@ -1695,6 +1695,65 @@ async function waitWithRollingSimulation(
   }
   // ─────────────────────────────────────────────────────────────────────
 
+  // ── Post-open grace retry ─────────────────────────────────────────────
+  // OpenSea API phase times sometimes differ from the real on-chain startTime
+  // by minutes. If wallets are still failing after T=0, keep retrying for
+  // MINT_POST_OPEN_GRACE_MS (default 30 min) so the bot catches the real open.
+  // Set MINT_POST_OPEN_GRACE_MS=0 to disable.
+  const graceMs = numberEnv("MINT_POST_OPEN_GRACE_MS", 30 * 60 * 1_000);
+  if (graceMs > 0 && skippedIds.size > 0) {
+    const graceEnd = Date.now() + graceMs;
+    await log(
+      prisma,
+      mintTaskId,
+      "info",
+      `${skippedIds.size} wallet(s) failed at scheduled open time — entering post-open grace period (${Math.round(graceMs / 60_000)}min). OpenSea API time may differ from on-chain phase start.`,
+    );
+    while (Date.now() < graceEnd && skippedIds.size > 0) {
+      await delay(Math.min(pollIntervalMs, Math.max(0, graceEnd - Date.now())));
+      if (skippedIds.size === 0) break;
+      await Promise.all(
+        resigned
+          .filter((p) => skippedIds.has(p.taskWalletId))
+          .map(async (p) => {
+            // Attempt payload refresh — API may now return valid calldata now phase is live.
+            if (payloadRefresher) {
+              try {
+                const freshPayload = await payloadRefresher(p.walletAddress);
+                p.mintPayloadForRetry = freshPayload;
+              } catch { /* ignore, proceed with stored payload */ }
+            }
+            try {
+              await simulateTx(options, { account: p.walletAddress, ...p.mintPayloadForRetry });
+              // Simulation passed — refresh nonce/signature and queue for broadcast.
+              const resSigned = await refreshSignatures(prisma, mintTaskId, [p], options);
+              if (resSigned[0]) Object.assign(p, resSigned[0]);
+              skippedIds.delete(p.taskWalletId);
+              passedDuringWait.add(p.taskWalletId);
+              await log(
+                prisma,
+                mintTaskId,
+                "info",
+                `Post-open grace simulation passed for wallet ${shortAddress(p.walletAddress)} — broadcasting now.`,
+                { walletId: p.walletId },
+              );
+            } catch { /* still failing — keep retrying until grace expires */ }
+          }),
+      );
+    }
+    // Log final outcome for any wallets that never recovered.
+    for (const p of resigned.filter((p) => skippedIds.has(p.taskWalletId))) {
+      await log(
+        prisma,
+        mintTaskId,
+        "error",
+        `Post-open grace period (${Math.round(graceMs / 60_000)}min) expired for wallet ${shortAddress(p.walletAddress)} — simulation never passed. Skipping broadcast.`,
+        { walletId: p.walletId },
+      );
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
   return resigned
     .filter((p) => !skippedIds.has(p.taskWalletId))
     .map((p) =>
