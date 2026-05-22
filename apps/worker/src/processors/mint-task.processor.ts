@@ -3,6 +3,7 @@ import type { PrismaClient } from "@prisma/client";
 import { decryptPrivateKey } from "@mint-copilot/wallet-crypto";
 import {
   createSeaDropAllowListMintPayload,
+  createSeaDropPublicMintPayload,
   createSeaDropSignedMintPayload,
   createMintPublicClient,
   signTransaction,
@@ -1234,9 +1235,24 @@ async function loadMintPayload(
   eligibility: EligibilityResult,
   warn: (message: string, contextJson?: unknown) => Promise<void>,
 ): Promise<MintPayload> {
-  // PUBLIC phase falls through to the OpenSea getMintPayload path below.
-  // We no longer hardcode SeaDrop v1 — OpenSea's API returns the correct
-  // calldata for any drop system (SeaDrop v1, v2, or custom clone contract).
+  if (phaseType === "PUBLIC") {
+    // Try OpenSea API first — returns the correct calldata for any drop system
+    // (SeaDrop v1, v2, or custom clone). If the phase is not open yet the API
+    // will reject; fall back to a SeaDrop v1 placeholder so the wallet can be
+    // pre-signed before T=0. The payloadRefresher in waitWithRollingSimulation
+    // will fetch the real payload at phase open and re-sign before broadcast.
+    try {
+      return await openSea.getMintPayload(collection.slug, walletAddress, quantity, "public");
+    } catch {
+      // Phase not open yet or API unavailable — use SeaDrop v1 for pre-signing.
+    }
+    return createSeaDropPublicMintPayload({
+      nftContract: collection.contractAddress as `0x${string}`,
+      minter: walletAddress as `0x${string}`,
+      mintPriceWei: resolveMintPriceWei(collection, phaseType, targetAt),
+      quantity,
+    });
+  }
 
   const eligibilityPayload = restrictedPayloadFromEligibility(
     collection.contractAddress,
@@ -1600,15 +1616,25 @@ async function waitWithRollingSimulation(
           // a fresh payload now that the phase is open. This handles collections
           // that use a different SeaDrop version — the API only returns valid
           // calldata once the phase goes live.
+          // IMPORTANT: after updating the payload we also re-sign so that the
+          // broadcast TX uses the correct calldata, not the pre-signed SeaDrop v1
+          // placeholder. Without re-signing the on-chain TX would revert and waste gas.
           if (payloadRefresher) {
             try {
-              const freshPayload = await Promise.race([
-                payloadRefresher(p.walletAddress),
-                delay(lastChanceTimeoutMs).then(() => { throw new Error("payload refresh timeout"); }),
+              await Promise.race([
+                (async () => {
+                  const freshPayload = await payloadRefresher(p.walletAddress);
+                  p.mintPayloadForRetry = freshPayload;
+                  // Re-sign with the correct payload so signedTx matches calldata.
+                  const resSigned = await refreshSignatures(prisma, mintTaskId, [p], options);
+                  if (resSigned[0]) Object.assign(p, resSigned[0]);
+                })(),
+                delay(lastChanceTimeoutMs).then(() => {
+                  throw new Error("payload refresh + re-sign timeout");
+                }),
               ]);
-              p.mintPayloadForRetry = freshPayload;
             } catch {
-              // Refresher failed or timed out — proceed with stored payload.
+              // Timed out or refresher failed — proceed with stored payload/signature.
             }
           }
 
