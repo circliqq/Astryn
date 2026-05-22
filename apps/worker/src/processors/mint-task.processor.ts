@@ -3,7 +3,6 @@ import type { PrismaClient } from "@prisma/client";
 import { decryptPrivateKey } from "@mint-copilot/wallet-crypto";
 import {
   createSeaDropAllowListMintPayload,
-  createSeaDropPublicMintPayload,
   createSeaDropSignedMintPayload,
   createMintPublicClient,
   signTransaction,
@@ -573,7 +572,7 @@ export async function executeMintTask(
             task.collection.slug,
             walletAddress,
             task.mintQuantity ?? 1,
-            "PUBLIC",
+            "public",
           )
       : undefined;
 
@@ -1235,23 +1234,9 @@ async function loadMintPayload(
   eligibility: EligibilityResult,
   warn: (message: string, contextJson?: unknown) => Promise<void>,
 ): Promise<MintPayload> {
-  if (phaseType === "PUBLIC") {
-    // Try OpenSea API first — it returns the correct calldata for ANY drop system
-    // (SeaDrop v1, v2, or custom clone). If the API rejects because the phase is
-    // not open yet, fall back to the SeaDrop v1 path so pre-open simulation can
-    // still run (it will fail as expected; SIM_BLOCKER / rolling sim handles it).
-    try {
-      return await openSea.getMintPayload(collection.slug, walletAddress, quantity, "PUBLIC");
-    } catch {
-      // Phase not open yet or API unavailable — fall through to SeaDrop v1 fallback.
-    }
-    return createSeaDropPublicMintPayload({
-      nftContract: collection.contractAddress as `0x${string}`,
-      minter: walletAddress as `0x${string}`,
-      mintPriceWei: resolveMintPriceWei(collection, phaseType, targetAt),
-      quantity,
-    });
-  }
+  // PUBLIC phase falls through to the OpenSea getMintPayload path below.
+  // We no longer hardcode SeaDrop v1 — OpenSea's API returns the correct
+  // calldata for any drop system (SeaDrop v1, v2, or custom clone contract).
 
   const eligibilityPayload = restrictedPayloadFromEligibility(
     collection.contractAddress,
