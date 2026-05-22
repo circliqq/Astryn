@@ -79,11 +79,11 @@ export async function processDirectMintJob(
   }
 
   const gasSettings = task.gasSettingsJson as unknown as GasSettings;
-  const gasFees = resolveGasFees(gasSettings, gasQuote);
+  const gasFees = resolveGasFees(gasQuote, gasSettings);
 
   // ── Build call data ────────────────────────────────────────────────────────
   const contractAddress = task.contractAddress as `0x${string}`;
-  const functionAbi = task.functionAbi as AbiFunction;
+  const functionAbi = task.functionAbi as unknown as AbiFunction;
   const callArgs = task.callArgs as unknown[];
   const valueWei = BigInt(task.valueWei ?? "0");
 

@@ -598,7 +598,7 @@ export async function executeMintTask(
     const buildersEnabled = /^(1|true|yes)$/i.test(process.env["ETH_BUILDERS_ENABLED"] ?? "");
     const isEthereum = network === "ethereum";
 
-    const contractAddress = task.collection.contractAddress as `0x${string}` | null;
+    const contractAddress = (task.collection.contractAddress ?? undefined) as `0x${string}` | undefined;
     const knownMaxSupply =
       simulationVerified.find((s) => s.stageMaxSupply != null)?.stageMaxSupply ?? null;
 
@@ -1219,7 +1219,7 @@ async function loadMintPayload(
   quantity: number,
   eligibility: EligibilityResult,
   warn: (message: string, contextJson?: unknown) => Promise<void>,
-) {
+): Promise<MintPayload> {
   if (phaseType === "PUBLIC") {
     return createSeaDropPublicMintPayload({
       nftContract: collection.contractAddress as `0x${string}`,
@@ -1298,7 +1298,7 @@ async function loadMintPayload(
       try {
         // Race the API call against a hard timeout so a slow response cannot
         // push us past the cutoff window.
-        const polled = await Promise.race<ReturnType<typeof openSea.getMintPayload> | null>([
+        const polled = await Promise.race<MintPayload | null>([
           openSea.getMintPayload(collection.slug, walletAddress, quantity, openSeaPhaseStr),
           delay(pollAttemptTimeoutMs).then(() => null),
         ]);
