@@ -185,18 +185,20 @@ export async function executeMintTask(
           task.collection.contractAddress,
         );
         if (onChainStartTime) {
+          // Use the EARLIER of the two times — OpenSea API time or on-chain time.
+          // Arriving early is safe (grace period handles pre-open failures),
+          // but arriving late means missing the first blocks after phase open.
+          const earlier = onChainStartTime.getTime() < targetAt.getTime()
+            ? onChainStartTime
+            : targetAt;
           const delta = onChainStartTime.getTime() - targetAt.getTime();
           if (Math.abs(delta) > 500) {
             await log(prisma, task.id, "info",
               `On-chain SeaDrop startTime differs from OpenSea API by ${Math.round(delta / 1000)}s. ` +
-              `Using on-chain time: ${onChainStartTime.toISOString()} (was ${targetAt.toISOString()}).`
-            );
-          } else {
-            await log(prisma, task.id, "info",
-              `On-chain SeaDrop startTime confirmed: ${onChainStartTime.toISOString()}.`
+              `Using earlier time: ${earlier.toISOString()} (on-chain: ${onChainStartTime.toISOString()}, API: ${targetAt.toISOString()}).`
             );
           }
-          targetAt = onChainStartTime;
+          targetAt = earlier;
         } else {
           await log(prisma, task.id, "info",
             `On-chain SeaDrop startTime not available — using OpenSea API time: ${targetAt.toISOString()}.`

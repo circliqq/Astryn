@@ -81,9 +81,12 @@ export async function getCollectionWithPhaseData(
             const phaseType = phaseTypeToPrisma(phase.type);
             const apiStartTime = new Date(phase.startTime);
             // Use on-chain time for PUBLIC phases if available and differs by >1s.
+            // Use the EARLIER of API time vs on-chain time.
+            // Early = safe (simulation just fails until open, grace period covers it).
+            // Late = miss first blocks after phase open.
             const startTime =
               phaseType === "PUBLIC" && onChainPublicStartTime &&
-              Math.abs(onChainPublicStartTime.getTime() - apiStartTime.getTime()) > 1000
+              onChainPublicStartTime.getTime() < apiStartTime.getTime()
                 ? onChainPublicStartTime
                 : apiStartTime;
             return {
