@@ -2,6 +2,7 @@ import { BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { MintPhaseType, type Prisma } from "@prisma/client";
 import { OpenSeaClient } from "@mint-copilot/opensea";
+import { fetchSeaDropPublicStartTime, SEA_DROP_ADDRESS } from "@mint-copilot/blockchain";
 import { PrismaService } from "../prisma/prisma.service.js";
 
 export type PhaseWindowStatus = "LIVE" | "UPCOMING" | "ENDED";
@@ -50,19 +51,49 @@ export async function getCollectionWithPhaseData(
       );
     }
 
+    // Fetch on-chain SeaDrop startTime for PUBLIC phases to override inaccurate
+    // OpenSea API times. The contract's startTime is the authoritative value.
+    let onChainPublicStartTime: Date | null = null;
+    const hasPublicPhase = livePhases.some((p) => phaseTypeToPrisma(p.type) === "PUBLIC");
+    if (hasPublicPhase && storedCollection.contractAddress) {
+      try {
+        const chain = (storedCollection as { chain?: string }).chain;
+        const chainName = chain === "BASE" ? "base" : "ethereum";
+        const rpcKey = chainName === "base" ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY";
+        const rpcUrl = config.get<string>(rpcKey);
+        if (rpcUrl) {
+          onChainPublicStartTime = await fetchSeaDropPublicStartTime(
+            { chainName, rpcUrl },
+            SEA_DROP_ADDRESS,
+            storedCollection.contractAddress,
+          );
+        }
+      } catch { /* non-fatal — fall back to OpenSea API time */ }
+    }
+
     const refreshedCollection = await prisma.collection.update({
       where: { id: storedCollection.id },
       data: {
         mintPriceWei: livePhases[0]?.priceEth ? ethToWei(livePhases[0].priceEth) : storedCollection.mintPriceWei,
         phases: {
           deleteMany: {},
-          create: livePhases.map((phase) => ({
-            phaseType: phaseTypeToPrisma(phase.type),
-            priceWei: ethToWei(phase.priceEth),
-            startTime: new Date(phase.startTime),
-            endTime: phase.endTime ? new Date(phase.endTime) : undefined,
-            maxMint: phase.maxMintPerWallet ?? null
-          }))
+          create: livePhases.map((phase) => {
+            const phaseType = phaseTypeToPrisma(phase.type);
+            const apiStartTime = new Date(phase.startTime);
+            // Use on-chain time for PUBLIC phases if available and differs by >1s.
+            const startTime =
+              phaseType === "PUBLIC" && onChainPublicStartTime &&
+              Math.abs(onChainPublicStartTime.getTime() - apiStartTime.getTime()) > 1000
+                ? onChainPublicStartTime
+                : apiStartTime;
+            return {
+              phaseType,
+              priceWei: ethToWei(phase.priceEth),
+              startTime,
+              endTime: phase.endTime ? new Date(phase.endTime) : undefined,
+              maxMint: phase.maxMintPerWallet ?? null,
+            };
+          })
         }
       },
       include: collectionInclude
