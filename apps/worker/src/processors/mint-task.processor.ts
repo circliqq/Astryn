@@ -598,7 +598,7 @@ export async function executeMintTask(
     const buildersEnabled = /^(1|true|yes)$/i.test(process.env["ETH_BUILDERS_ENABLED"] ?? "");
     const isEthereum = network === "ethereum";
 
-    const contractAddress = (task.collection.contractAddress ?? undefined) as `0x${string}` | undefined;
+    const contractAddress = task.collection.contractAddress as `0x${string}`;
     const knownMaxSupply =
       simulationVerified.find((s) => s.stageMaxSupply != null)?.stageMaxSupply ?? null;
 
