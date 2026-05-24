@@ -10,10 +10,13 @@ import {
   ChevronDown,
   ChevronUp,
   ClipboardList,
+  DollarSign,
   ExternalLink,
   Flame,
+  Gauge,
   Repeat2,
   WalletCards,
+  Wallet,
   Zap,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -31,6 +34,20 @@ import {
   type GasSettings,
   type NetworkKey,
 } from "@/lib/gas-settings";
+
+// ── ETH price helper ──────────────────────────────────────────────────────────
+async function fetchEthUsdPrice(): Promise<number | null> {
+  try {
+    const res = await fetch(
+      "https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd",
+      { cache: "no-store" }
+    );
+    const json = await res.json();
+    return json?.ethereum?.usd ?? null;
+  } catch {
+    return null;
+  }
+}
 
 interface Wallet {
   id: string;
@@ -112,13 +129,24 @@ function MintSetupContent() {
   const [phaseType, setPhaseType] = useState<CollectionPhase["phaseType"]>("PUBLIC");
   const [selectedWalletIds, setSelectedWalletIds] = useState<string[]>([]);
   const [gasModeExtended, setGasModeExtended] = useState<ExtendedGasMode>(() => loadSavedGasSettings().mode);
-  const [advancedGas, setAdvancedGas] = useState<Pick<GasSettings, "maxFeeGwei" | "priorityFeeGwei" | "maxTotalGasCostEth" | "maxBumpAttempts">>({
+  const [advancedGas, setAdvancedGas] = useState<Pick<GasSettings, "maxFeeGwei" | "priorityFeeGwei" | "maxTotalGasCostEth" | "maxBumpAttempts"> & { gasLimitUnits: number; gasBudget: string; gasBudgetCurrency: "ETH" | "USD" }>({
     maxFeeGwei: 50,
     priorityFeeGwei: 2,
     maxTotalGasCostEth: 0.005,
     maxBumpAttempts: 3,
+    gasLimitUnits: DEFAULT_MINT_GAS_UNITS,
+    gasBudget: "",
+    gasBudgetCurrency: "ETH",
   });
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // ETH/USD price for budget conversion
+  const { data: ethUsdPrice } = useQuery<number | null>({
+    queryKey: ["eth-usd-price"],
+    queryFn: fetchEthUsdPrice,
+    refetchInterval: 60_000,
+    staleTime: 30_000,
+  });
   const [mintQuantity, setMintQuantity] = useState("1");
   const [scheduleMode, setScheduleMode] = useState<"draft" | "phase_start" | "custom">("draft");
   const [scheduleAt, setScheduleAt] = useState("");
@@ -254,7 +282,10 @@ function MintSetupContent() {
           mode: "balanced",
           maxFeeGwei: advancedGas.maxFeeGwei,
           priorityFeeGwei: advancedGas.priorityFeeGwei,
-          maxTotalGasCostEth: advancedGas.maxTotalGasCostEth,
+          // If budget is set, cap per-wallet to budget / walletCount
+          maxTotalGasCostEth: gasBudgetEth > 0 && selectedWalletIds.length > 0
+            ? Math.min(advancedGas.maxTotalGasCostEth, gasBudgetEth / Math.max(1, selectedWalletIds.length))
+            : advancedGas.maxTotalGasCostEth,
           gasBumpEnabled: true,
           maxBumpAttempts: advancedGas.maxBumpAttempts,
         }
@@ -262,16 +293,26 @@ function MintSetupContent() {
 
   const qty = Math.max(1, Number.parseInt(mintQuantity, 10) || 1);
   const mintPriceEth = selectedPhase ? weiToEth(selectedPhase.priceWei) : 0;
+  // Budget in ETH (convert from USD if needed)
+  const gasBudgetEth = (() => {
+    const raw = Number(advancedGas.gasBudget);
+    if (!raw || raw <= 0) return 0;
+    if (advancedGas.gasBudgetCurrency === "USD") {
+      return ethUsdPrice && ethUsdPrice > 0 ? raw / ethUsdPrice : 0;
+    }
+    return raw;
+  })();
+
   const gasCostPerWallet = (() => {
     if (!gasRec) return 0;
     if (gasModeExtended === "advanced") {
-      // Advanced mode: calculate estimate using the user's custom gas values,
-      // not the balanced-mode live gasRec. effectiveGwei = min(maxFee, base+priority).
+      // Advanced mode: use custom gas limit units + custom fee values
+      const gasUnits = advancedGas.gasLimitUnits > 0 ? advancedGas.gasLimitUnits : gasRec.estimatedGasUnits;
       const effectiveGwei = Math.min(
         advancedGas.maxFeeGwei,
         gasRec.liveBaseGwei + advancedGas.priorityFeeGwei
       );
-      return Math.max(0, ethForGas(gasRec.estimatedGasUnits, effectiveGwei));
+      return Math.max(0, ethForGas(gasUnits, effectiveGwei));
     }
     return Math.max(0, gasRec.estimatedGasCostEth);
   })();
@@ -645,69 +686,221 @@ function MintSetupContent() {
                         {advancedOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                       </button>
                       {advancedOpen && (
-                        <div className="grid gap-3 border-t border-graphite-700 px-3 pb-3 pt-3 md:grid-cols-2">
+                        <div className="border-t border-graphite-700 px-3 pb-3 pt-3 space-y-3">
+                          {/* Row 1: Max fee + Priority fee */}
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <label>
+                              <span className="mb-1 block text-[10px] font-medium text-graphite-400">
+                                Max fee (gwei)
+                              </span>
+                              <Input
+                                type="number"
+                                min="1"
+                                step="any"
+                                value={advancedGas.maxFeeGwei}
+                                onChange={(e) =>
+                                  setAdvancedGas((g) => ({ ...g, maxFeeGwei: Number(e.target.value) }))
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span className="mb-1 block text-[10px] font-medium text-graphite-400">
+                                Priority fee (gwei)
+                              </span>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={advancedGas.priorityFeeGwei}
+                                onChange={(e) =>
+                                  setAdvancedGas((g) => ({ ...g, priorityFeeGwei: Number(e.target.value) }))
+                                }
+                              />
+                            </label>
+                          </div>
+
+                          {/* Row 2: Gas cap + Max bump */}
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <label>
+                              <span className="mb-1 block text-[10px] font-medium text-graphite-400">
+                                Gas cap / wallet (ETH)
+                              </span>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="any"
+                                value={advancedGas.maxTotalGasCostEth}
+                                onChange={(e) =>
+                                  setAdvancedGas((g) => ({
+                                    ...g,
+                                    maxTotalGasCostEth: Number(e.target.value),
+                                  }))
+                                }
+                              />
+                            </label>
+                            <label>
+                              <span className="mb-1 block text-[10px] font-medium text-graphite-400">
+                                Max bump attempts
+                              </span>
+                              <Input
+                                type="number"
+                                min="0"
+                                max="10"
+                                value={advancedGas.maxBumpAttempts}
+                                onChange={(e) =>
+                                  setAdvancedGas((g) => ({
+                                    ...g,
+                                    maxBumpAttempts: Math.max(0, Number(e.target.value)),
+                                  }))
+                                }
+                              />
+                            </label>
+                          </div>
+
+                          {/* Row 3: Gas limit (units) */}
                           <label>
-                            <span className="mb-1 block text-[10px] font-medium text-graphite-400">
-                              Max fee (gwei)
+                            <span className="mb-1 flex items-center gap-1 text-[10px] font-medium text-graphite-400">
+                              <Gauge size={10} className="text-graphite-500" />
+                              Gas limit (units)
+                              <span className="text-graphite-600 font-normal">— max execution units per tx</span>
                             </span>
                             <Input
                               type="number"
-                              min="1"
-                              step="any"
-                              value={advancedGas.maxFeeGwei}
-                              onChange={(e) =>
-                                setAdvancedGas((g) => ({ ...g, maxFeeGwei: Number(e.target.value) }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            <span className="mb-1 block text-[10px] font-medium text-graphite-400">
-                              Priority fee (gwei)
-                            </span>
-                            <Input
-                              type="number"
-                              min="0"
-                              step="any"
-                              value={advancedGas.priorityFeeGwei}
-                              onChange={(e) =>
-                                setAdvancedGas((g) => ({ ...g, priorityFeeGwei: Number(e.target.value) }))
-                              }
-                            />
-                          </label>
-                          <label>
-                            <span className="mb-1 block text-[10px] font-medium text-graphite-400">
-                              Gas cap (ETH)
-                            </span>
-                            <Input
-                              type="number"
-                              min="0"
-                              step="any"
-                              value={advancedGas.maxTotalGasCostEth}
+                              min="21000"
+                              step="1000"
+                              value={advancedGas.gasLimitUnits}
                               onChange={(e) =>
                                 setAdvancedGas((g) => ({
                                   ...g,
-                                  maxTotalGasCostEth: Number(e.target.value),
+                                  gasLimitUnits: Math.max(21_000, Number(e.target.value) || DEFAULT_MINT_GAS_UNITS),
                                 }))
                               }
                             />
                           </label>
-                          <label>
-                            <span className="mb-1 block text-[10px] font-medium text-graphite-400">
-                              Max bump attempts
+
+                          {/* Row 4: Gas Budget with ETH/USD toggle */}
+                          <div>
+                            <span className="mb-1 flex items-center gap-1 text-[10px] font-medium text-graphite-400">
+                              <Wallet size={10} className="text-graphite-500" />
+                              Gas budget
+                              <span className="text-graphite-600 font-normal">— total spend cap across all wallets</span>
                             </span>
-                            <Input
-                              type="number"
-                              min="0"
-                              max="10"
-                              value={advancedGas.maxBumpAttempts}
-                              onChange={(e) =>
-                                setAdvancedGas((g) => ({
-                                  ...g,
-                                  maxBumpAttempts: Math.max(0, Number(e.target.value)),
-                                }))
-                              }
-                            />
-                          </label>
+                            <div className="flex gap-2">
+                              {/* Currency toggle */}
+                              <div className="flex rounded-md border border-graphite-600 overflow-hidden text-[10px] font-semibold shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => setAdvancedGas((g) => ({ ...g, gasBudgetCurrency: "ETH" }))}
+                                  className={`px-2.5 py-1.5 transition-colors ${
+                                    advancedGas.gasBudgetCurrency === "ETH"
+                                      ? "bg-brand text-white"
+                                      : "bg-graphite-800 text-graphite-400 hover:text-graphite-200"
+                                  }`}
+                                >
+                                  ETH
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setAdvancedGas((g) => ({ ...g, gasBudgetCurrency: "USD" }))}
+                                  className={`px-2.5 py-1.5 transition-colors border-l border-graphite-600 ${
+                                    advancedGas.gasBudgetCurrency === "USD"
+                                      ? "bg-brand text-white"
+                                      : "bg-graphite-800 text-graphite-400 hover:text-graphite-200"
+                                  }`}
+                                >
+                                  <DollarSign size={10} className="inline -mt-px" />USD
+                                </button>
+                              </div>
+                              <div className="relative flex-1">
+                                <Input
+                                  type="number"
+                                  min="0"
+                                  step="any"
+                                  placeholder={advancedGas.gasBudgetCurrency === "ETH" ? "e.g. 0.05" : "e.g. 20"}
+                                  value={advancedGas.gasBudget}
+                                  onChange={(e) => setAdvancedGas((g) => ({ ...g, gasBudget: e.target.value }))}
+                                  className="pr-14"
+                                />
+                                <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-graphite-500">
+                                  {advancedGas.gasBudgetCurrency === "USD" && ethUsdPrice
+                                    ? `≈ ${advancedGas.gasBudget && ethUsdPrice ? (Number(advancedGas.gasBudget) / ethUsdPrice).toFixed(5) : "—"} ETH`
+                                    : advancedGas.gasBudgetCurrency === "ETH" && ethUsdPrice && advancedGas.gasBudget
+                                    ? `≈ $${(Number(advancedGas.gasBudget) * ethUsdPrice).toFixed(2)}`
+                                    : ""}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* ── Spending Mode ── */}
+                          {(() => {
+                            const budget = gasBudgetEth;
+                            const totalEstSpend = gasCostPerWallet * Math.max(1, selectedWalletIds.length) * qty;
+                            const remaining = budget > 0 ? budget - totalEstSpend : null;
+                            const pct = budget > 0 ? Math.min(100, (totalEstSpend / budget) * 100) : 0;
+                            const budgetUsd = ethUsdPrice && budget > 0 ? budget * ethUsdPrice : null;
+                            const spendUsd = ethUsdPrice && totalEstSpend > 0 ? totalEstSpend * ethUsdPrice : null;
+
+                            return (
+                              <div className="rounded-md border border-graphite-600 bg-graphite-900/60 px-3 py-2.5 text-[11px]">
+                                <div className="mb-2 flex items-center gap-1.5 font-semibold uppercase tracking-wider text-graphite-400 text-[10px]">
+                                  <DollarSign size={10} className="text-brand" />
+                                  Spending Mode
+                                </div>
+                                <div className="space-y-1.5 text-graphite-300">
+                                  <div className="flex justify-between">
+                                    <span className="text-graphite-500">Budget</span>
+                                    <span className="font-mono">
+                                      {budget > 0
+                                        ? `${budget.toFixed(5)} ETH${budgetUsd ? ` · $${budgetUsd.toFixed(2)}` : ""}`
+                                        : <span className="text-graphite-600">Not set</span>}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between">
+                                    <span className="text-graphite-500">Est. spend ({Math.max(1, selectedWalletIds.length)}w × {qty})</span>
+                                    <span className={`font-mono ${budget > 0 && totalEstSpend > budget ? "text-red-400" : "text-graphite-200"}`}>
+                                      {gasRec
+                                        ? `~${totalEstSpend.toFixed(5)} ETH${spendUsd ? ` · $${spendUsd.toFixed(2)}` : ""}`
+                                        : "—"}
+                                    </span>
+                                  </div>
+                                  {remaining !== null && (
+                                    <div className="flex justify-between">
+                                      <span className="text-graphite-500">Remaining</span>
+                                      <span className={`font-mono font-medium ${remaining < 0 ? "text-red-400" : "text-status-green-text"}`}>
+                                        {remaining < 0
+                                          ? `–${Math.abs(remaining).toFixed(5)} ETH over budget`
+                                          : `${remaining.toFixed(5)} ETH`}
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+                                {/* Progress bar */}
+                                {budget > 0 && (
+                                  <div className="mt-2.5">
+                                    <div className="h-1.5 w-full rounded-full bg-graphite-700 overflow-hidden">
+                                      <div
+                                        className={`h-full rounded-full transition-all ${
+                                          pct >= 100 ? "bg-red-500" : pct >= 80 ? "bg-amber-400" : "bg-brand"
+                                        }`}
+                                        style={{ width: `${pct}%` }}
+                                      />
+                                    </div>
+                                    <div className="mt-1 flex justify-between text-[9px] text-graphite-600">
+                                      <span>0</span>
+                                      <span className={pct >= 100 ? "text-red-400" : pct >= 80 ? "text-amber-400" : "text-graphite-400"}>
+                                        {pct.toFixed(0)}% of budget
+                                      </span>
+                                      <span>Budget</span>
+                                    </div>
+                                  </div>
+                                )}
+                                {budget <= 0 && (
+                                  <p className="mt-1.5 text-[10px] text-graphite-600">Set a gas budget above to track spending.</p>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
@@ -788,7 +981,9 @@ function MintSetupContent() {
                       <div className="flex justify-between">
                         <span className="text-graphite-400">Est. gas units</span>
                         <span className="font-mono">
-                          {gasRec.estimatedGasUnits.toLocaleString()}
+                          {gasModeExtended === "advanced"
+                            ? advancedGas.gasLimitUnits.toLocaleString()
+                            : gasRec.estimatedGasUnits.toLocaleString()}
                         </span>
                       </div>
                       <div className="my-1 border-t border-graphite-700" />
