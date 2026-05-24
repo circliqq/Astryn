@@ -119,30 +119,20 @@ export default function MintTasksPage() {
         </div>
 
         {/* ── Filter tabs ── */}
-        <div
-          className="flex flex-wrap gap-1 rounded-lg p-1"
-          style={{ border: "1px solid var(--border)", background: "var(--surface-2)" }}
-        >
+        <div className="segmented-control">
           {FILTER_TABS.map(({ key, label }) => {
             const count = key === "ALL" ? tasks.length : filterTasks(tasks, key).length;
-            const isActive = activeTab === key;
             return (
               <button
                 key={key}
+                data-active={String(activeTab === key)}
                 onClick={() => setActiveTab(key)}
-                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] font-medium transition-colors"
-                style={{
-                  background: isActive ? "var(--surface-3)" : "transparent",
-                  color: isActive ? "var(--text-1)" : "var(--text-3)",
-                }}
+                className="flex items-center gap-1.5"
               >
                 {label}
                 <span
-                  className="rounded px-1.5 py-0.5 font-mono text-[10px]"
-                  style={{
-                    background: "var(--surface-3)",
-                    color: isActive ? "var(--text-2)" : "var(--text-3)",
-                  }}
+                  className="rounded px-1 font-mono text-[10px]"
+                  style={{ background: "var(--surface-3)", color: "var(--text-3)" }}
                 >
                   {count}
                 </span>

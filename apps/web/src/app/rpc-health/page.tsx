@@ -269,11 +269,11 @@ export default function RpcHealthPage() {
         ) : endpoints.length === 0 ? (
           <Panel>
             <div className="flex flex-col items-center px-6 py-12 text-center">
-              <div className="grid size-[52px] place-items-center rounded-full bg-[#1E2028]">
-                <Activity size={24} className="text-graphite-500" />
+              <div className="grid size-[52px] place-items-center rounded-full" style={{ background: "var(--surface-2)" }}>
+                <Activity size={24} style={{ color: "var(--text-3)" }} />
               </div>
-              <p className="mt-3 text-[13px] font-medium text-graphite-200">No RPC endpoints</p>
-              <p className="mt-1 text-[12px] text-graphite-500">Add an endpoint to start monitoring RPC health.</p>
+              <p className="mt-3 text-[13px] font-medium" style={{ color: "var(--text-2)" }}>No RPC endpoints</p>
+              <p className="mt-1 text-[12px]" style={{ color: "var(--text-3)" }}>Add an endpoint to start monitoring RPC health.</p>
             </div>
           </Panel>
         ) : (

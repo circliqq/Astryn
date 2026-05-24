@@ -183,7 +183,7 @@ export default function DashboardPage() {
               <p className="metric-value">{m.value}</p>
               <p
                 className="mt-1.5 text-[12px]"
-                style={{ color: m.warn ? "#F47067" : "var(--text-3)" }}
+                style={{ color: m.warn ? "var(--status-red, #F47067)" : "var(--text-3)" }}
               >
                 {m.sub}
               </p>

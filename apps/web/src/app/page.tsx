@@ -24,7 +24,7 @@ export default function LandingPage() {
     <main className="min-h-screen overflow-hidden">
       <header className="mx-auto flex max-w-7xl items-center justify-between px-5 py-6">
         <Brand />
-        <nav className="hidden items-center gap-8 text-sm text-graphite-400 md:flex">
+        <nav className="hidden items-center gap-8 text-sm md:flex" style={{ color: "var(--text-3)" }}>
           <a href="#features">Features</a>
           <a href="#pricing">Pricing</a>
           <a href="#docs">Docs</a>
@@ -93,17 +93,17 @@ export default function LandingPage() {
           const Icon = feature.icon;
           return (
             <Panel key={feature.title} className="p-5">
-              <div className="mb-4 grid size-10 place-items-center rounded-md border border-cyan-300/20 bg-cyan-300/10 text-cyan-200">
+              <div className="mb-4 grid size-10 place-items-center rounded-[8px]" style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--brand)" }}>
                 <Icon size={18} />
               </div>
               <h2 className="text-sm font-semibold">{feature.title}</h2>
-              <p className="mt-2 text-xs leading-5 text-graphite-400">{feature.copy}</p>
+              <p className="mt-2 text-xs leading-5" style={{ color: "var(--text-3)" }}>{feature.copy}</p>
             </Panel>
           );
         })}
       </section>
 
-      <section className="border-t border-graphite-700 bg-graphite-950/60">
+      <section className="border-t" style={{ borderColor: "var(--border)", background: "var(--surface-2)" }}>
         <div className="mx-auto grid max-w-7xl grid-cols-1 gap-px px-5 py-6 md:grid-cols-5">
           {trust.map(([title, copy]) => (
             <div key={title} className="px-4 py-5">

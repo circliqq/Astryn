@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { Flame } from "lucide-react";
 import { Button, Input } from "./ui";
 import { apiFetch, setToken } from "@/lib/api";
 
@@ -10,19 +11,21 @@ import { apiFetch, setToken } from "@/lib/api";
 
 function AuthLogo() {
   return (
-    <div className="flex flex-col items-center gap-3">
+    <div className="flex flex-col items-center gap-2.5">
       <span
-        className="grid size-10 shrink-0 place-items-center rounded-[8px] text-[16px] font-bold leading-none text-white"
+        className="grid size-10 shrink-0 place-items-center rounded-[8px] leading-none text-white"
         style={{ background: "var(--brand)" }}
       >
-        A
+        <Flame size={18} strokeWidth={2.2} />
       </span>
-      <span
-        className="text-[16px] font-semibold tracking-tight"
-        style={{ color: "var(--text-1)" }}
-      >
-        Astryn
-      </span>
+      <div className="text-center">
+        <p className="text-[15px] font-semibold tracking-tight" style={{ color: "var(--text-1)" }}>
+          Astryn
+        </p>
+        <p className="text-[10px] font-medium uppercase tracking-widest" style={{ color: "var(--text-3)", letterSpacing: "0.14em" }}>
+          Gas War
+        </p>
+      </div>
     </div>
   );
 }
@@ -84,7 +87,7 @@ export function AuthCard({ mode }: { mode: "login" | "register" }) {
         {/* Card */}
         <div className="panel p-8">
           <h1
-            className="text-[22px] font-bold tracking-tight"
+            className="text-[18px] font-semibold tracking-tight"
             style={{ color: "var(--text-1)" }}
           >
             {isLogin ? "Sign in" : "Create account"}
@@ -94,8 +97,8 @@ export function AuthCard({ mode }: { mode: "login" | "register" }) {
             style={{ color: "var(--text-3)" }}
           >
             {isLogin
-              ? "Access your minting console"
-              : "Start with secure auth and encrypted wallet storage."}
+              ? "Access your minting console."
+              : "Secure auth with encrypted wallet storage."}
           </p>
 
           <form className="space-y-3" onSubmit={handleSubmit}>

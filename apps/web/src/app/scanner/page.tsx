@@ -107,31 +107,23 @@ export default function ScannerPage() {
           </div>
 
           {/* Mode toggle */}
-          <div className="flex gap-1 rounded-md p-1 mx-5 mt-4 w-fit" style={{ border: "1px solid var(--border)", background: "var(--surface-2)" }}>
+          <div className="segmented-control mx-5 mt-4">
             <button
               type="button"
+              data-active={String(scanMode === "url")}
               onClick={() => { setScanMode("url"); setError(null); setCollection(null); }}
-              className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-[12px] font-medium transition-colors ${
-                scanMode === "url"
-                  ? ""
-                  : ""
-              }`}
-              style={scanMode === "url"
-                ? { background: "var(--surface-3)", color: "var(--text-1)" }
-                : { color: "var(--text-3)" }}
+              className="flex items-center gap-1.5"
             >
-              <Link2 size={12} />
+              <Link2 size={11} />
               OpenSea URL
             </button>
             <button
               type="button"
+              data-active={String(scanMode === "contract")}
               onClick={() => { setScanMode("contract"); setError(null); setCollection(null); }}
-              className={`flex items-center gap-1.5 rounded px-3 py-1.5 text-[12px] font-medium transition-colors`}
-              style={scanMode === "contract"
-                ? { background: "var(--surface-3)", color: "var(--text-1)" }
-                : { color: "var(--text-3)" }}
+              className="flex items-center gap-1.5"
             >
-              <Hash size={12} />
+              <Hash size={11} />
               Contract Address
             </button>
           </div>

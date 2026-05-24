@@ -100,11 +100,11 @@ function LiveStatusBar() {
   const gasMid  = rawGwei !== null && rawGwei >= 10 && !gasHigh;
 
   return (
-    <div className="hidden items-center gap-3 text-[11.5px] md:flex" style={{ color: "var(--text-3)" }}>
+    <div className="hidden items-center gap-2 text-[11.5px] md:flex" style={{ color: "var(--text-3)" }}>
       {rpc.length > 0 && (
         <span
-          className="flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-1)" }}
+          className="flex items-center gap-1.5 rounded-[5px] px-2 py-0.5"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-2)" }}
         >
           <Dot tone={allRpcOk ? "green" : someRpcBad ? "yellow" : "muted"} />
           RPC {healthyRpc}/{rpc.length}
@@ -112,17 +112,17 @@ function LiveStatusBar() {
       )}
       {readyPct !== null && (
         <span
-          className="flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-1)" }}
+          className="flex items-center gap-1.5 rounded-[5px] px-2 py-0.5"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-2)" }}
         >
           <Dot tone={readyPct >= 80 ? "green" : readyPct >= 50 ? "yellow" : "red"} />
-          Wallets {readyPct}%
+          {readyPct}% ready
         </span>
       )}
       {baseFeeGwei !== null && (
         <span
-          className="flex items-center gap-1.5 rounded-full px-2 py-0.5 font-semibold"
-          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-1)" }}
+          className="flex items-center gap-1.5 rounded-[5px] px-2 py-0.5"
+          style={{ background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text-2)" }}
         >
           <Dot tone={gasHigh ? "red" : gasMid ? "yellow" : "green"} />
           {baseFeeGwei} gwei
@@ -194,44 +194,38 @@ export function AppShell({ title, children }: { title: string; children: React.R
       <main className="flex flex-1 flex-col min-w-0 overflow-hidden">
         {/* Header */}
         <header
-          className="h-12 shrink-0 flex items-center justify-between px-5 border-b"
+          className="h-11 shrink-0 flex items-center justify-between px-5 border-b"
           style={{
             background: "var(--surface)",
             borderColor: "var(--border)",
-            boxShadow: "0 1px 0 var(--border), 0 1px 4px rgba(0,0,0,0.06)",
           }}
         >
           <div className="flex items-center gap-3">
             <Button
               type="button"
               variant="ghost"
-              className="size-8 px-0 lg:hidden"
+              className="size-7 px-0 lg:hidden"
               aria-label="Open navigation"
               onClick={() => setSidebarOpen(true)}
             >
-              <Menu size={16} />
+              <Menu size={15} />
             </Button>
-            <div className="flex items-center gap-2">
-              <h1
-                className="text-[13px] font-semibold tracking-tight"
-                style={{ color: "var(--text-1)" }}
-              >
-                {title}
-              </h1>
-            </div>
+            <h1
+              className="text-[13px] font-medium"
+              style={{ color: "var(--text-1)" }}
+            >
+              {title}
+            </h1>
           </div>
 
           <div className="flex items-center gap-1.5">
             <LiveClock />
             <LiveStatusBar />
-            <span
-              className="h-4 w-px mx-1"
-              style={{ background: "var(--border)" }}
-            />
+            <span className="h-3.5 w-px mx-1" style={{ background: "var(--border-2)" }} />
             <Button
               type="button"
               variant="ghost"
-              className="size-8 px-0"
+              className="size-7 px-0"
               style={{ color: "var(--text-3)" }}
               aria-label="Logout"
               title="Logout"

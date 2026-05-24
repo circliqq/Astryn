@@ -1,11 +1,13 @@
+import { Flame } from "lucide-react";
+
 export function Brand() {
   return (
     <div className="flex items-center gap-2">
       <span
-        className="grid size-7 shrink-0 place-items-center rounded-[6px] text-[13px] font-bold leading-none text-white"
+        className="grid size-7 shrink-0 place-items-center rounded-[6px] leading-none text-white"
         style={{ background: "var(--brand)" }}
       >
-        A
+        <Flame size={13} strokeWidth={2.2} />
       </span>
       <span
         className="text-[14px] font-semibold tracking-tight"

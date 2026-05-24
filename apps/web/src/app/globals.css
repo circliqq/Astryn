@@ -4,18 +4,18 @@
 
 /* ── Design tokens — dark (default) ────────────────────────────────────── */
 :root {
-  --bg:           #0B0D10;
-  --surface:      #13151A;
-  --surface-2:    #1A1D24;
-  --surface-3:    #20232C;
-  --border:       #2A2D38;
-  --border-2:     #363A48;
-  --text-1:       #F1F3F7;
-  --text-2:       #9AA0B4;
-  --text-3:       #5E6478;
-  --brand:        #FF6B35;
-  --brand-2:      #E55A25;
-  --brand-surface:#1F1208;
+  --bg:           #0D0E12;
+  --surface:      #141518;
+  --surface-2:    #1B1C22;
+  --surface-3:    #22242C;
+  --border:       #26272F;
+  --border-2:     #32343F;
+  --text-1:       #EDEEF2;
+  --text-2:       #8B91A8;
+  --text-3:       #52566A;
+  --brand:        #E06830;
+  --brand-2:      #C85820;
+  --brand-surface:#1A1108;
 
   /* legacy aliases — keep working for existing components */
   --panel:             var(--surface);
@@ -29,7 +29,7 @@
   --table-th-text:     var(--text-3);
   --table-td-text:     var(--text-2);
   --table-td-border:   var(--border);
-  --table-row-hover:   rgba(255,255,255,0.018);
+  --table-row-hover:   rgba(255,255,255,0.016);
   --label-caps-color:  var(--text-3);
   --segmented-bg:          var(--surface-3);
   --segmented-active-bg:   var(--surface-2);
@@ -42,31 +42,31 @@
 html:not(.dark) {
   color-scheme: light;
 
-  --bg:           #F6F7F9;
+  --bg:           #F4F5F7;
   --surface:      #FFFFFF;
-  --surface-2:    #F1F2F5;
-  --surface-3:    #E9EBF0;
-  --border:       #E4E6EC;
-  --border-2:     #C8CDD9;
-  --text-1:       #111827;
-  --text-2:       #6B7280;
-  --text-3:       #9CA3AF;
-  --brand:        #FF6B35;
-  --brand-2:      #E55A25;
-  --brand-surface:#FFF6F2;
+  --surface-2:    #F0F1F4;
+  --surface-3:    #E8EAF0;
+  --border:       #E2E4EC;
+  --border-2:     #C5CAD6;
+  --text-1:       #0F1117;
+  --text-2:       #5C6378;
+  --text-3:       #9299AC;
+  --brand:        #D45F28;
+  --brand-2:      #BC5020;
+  --brand-surface:#FEF3ED;
 
   --panel:             var(--surface);
   --panel-soft:        var(--surface-2);
   --metric-card-bg:    var(--surface);
-  --nav-active-bg:     #FFF0EA;
-  --nav-active-text:   #D45A1A;
+  --nav-active-bg:     #FEF0E8;
+  --nav-active-text:   #C95420;
   --notice-bg:         var(--surface-2);
   --notice-text:       var(--text-1);
   --modal-bg:          var(--surface);
   --table-th-text:     var(--text-3);
   --table-td-text:     var(--text-2);
   --table-td-border:   var(--border);
-  --table-row-hover:   rgba(0,0,0,0.022);
+  --table-row-hover:   rgba(0,0,0,0.020);
   --label-caps-color:  var(--text-3);
   --segmented-bg:          var(--surface-3);
   --segmented-active-bg:   var(--surface);
@@ -108,13 +108,13 @@ button, input, select, textarea {
 }
 
 ::selection {
-  background: rgba(255, 107, 53, 0.25);
+  background: rgba(224, 104, 48, 0.22);
 }
 
-/* ── Scrollbar (thin, 5px) ──────────────────────────────────────────────── */
+/* ── Scrollbar (thin, 4px) ──────────────────────────────────────────────── */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-track {
@@ -135,19 +135,19 @@ button, input, select, textarea {
 .panel {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.12), 0 1px 2px rgba(0,0,0,0.08);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.10);
 }
 
 html:not(.dark) .panel {
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05), 0 1px 2px rgba(0,0,0,0.03);
 }
 
 .panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 11px 16px;
+  padding: 12px 16px;
   border-bottom: 1px solid var(--border);
   min-height: 44px;
 }
@@ -159,88 +159,72 @@ html:not(.dark) .panel {
 .panel-section {
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 7px;
 }
 
 .label {
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-3);
 }
 
 /* legacy alias */
 .label-caps {
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-3);
 }
 
+/* ── Metric card — clean, no flash ──────────────────────────────────────── */
 .metric-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 16px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
-  position: relative;
-  overflow: hidden;
-}
-
-.metric-card::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 2px;
-  background: linear-gradient(90deg, var(--brand) 0%, transparent 100%);
-  opacity: 0;
-  transition: opacity 0.2s;
+  border-radius: 10px;
+  padding: 18px 16px 16px;
+  transition: border-color 0.15s;
 }
 
 .metric-card:hover {
   border-color: var(--border-2);
-  box-shadow: 0 4px 14px rgba(0,0,0,0.18);
-  transform: translateY(-1px);
-}
-
-.metric-card:hover::before {
-  opacity: 0.55;
-}
-
-html:not(.dark) .metric-card:hover {
-  box-shadow: 0 4px 14px rgba(0,0,0,0.08);
 }
 
 .metric-value {
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 700;
   color: var(--text-1);
   line-height: 1;
-  margin-top: 6px;
-  letter-spacing: -0.03em;
+  margin-top: 8px;
+  letter-spacing: -0.04em;
   font-variant-numeric: tabular-nums;
 }
 
+html:not(.dark) .metric-value {
+  color: var(--text-1);
+}
+
+/* ── Focus ring ─────────────────────────────────────────────────────────── */
 .focus-ring {
   outline: none;
 }
 
 .focus-ring:focus-visible {
-  box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px rgba(255, 107, 53, 0.35);
+  box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px rgba(224, 104, 48, 0.40);
 }
 
+/* ── Nav items ──────────────────────────────────────────────────────────── */
 .nav-item {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 10px;
+  padding: 5px 9px;
   border-radius: 6px;
   font-size: 13px;
   color: var(--text-2);
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.1s, color 0.1s;
   cursor: pointer;
   text-decoration: none;
   font-weight: 400;
@@ -259,9 +243,27 @@ html:not(.dark) .metric-card:hover {
 }
 
 html:not(.dark) .nav-item-active {
-  background: #FFF0EA;
-  color: #D45A1A;
-  box-shadow: inset 2px 0 0 #E55A25;
+  background: #FEF0E8;
+  color: #C95420;
+  box-shadow: inset 2px 0 0 #D45F28;
+}
+
+/* nav-group toggle button */
+.nav-group-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 2px 10px 2px 9px;
+  border-radius: 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.nav-group-toggle:hover {
+  background: var(--surface-2);
 }
 
 /* legacy nav-active alias */
@@ -270,12 +272,14 @@ html:not(.dark) .nav-item-active {
   color: var(--nav-active-text);
 }
 
+/* ── Divider ────────────────────────────────────────────────────────────── */
 .divider {
   border: none;
   border-top: 1px solid var(--border);
   margin: 0;
 }
 
+/* ── Data table ─────────────────────────────────────────────────────────── */
 .data-table {
   border-collapse: collapse;
   width: 100%;
@@ -284,9 +288,9 @@ html:not(.dark) .nav-item-active {
 .data-table th {
   text-align: left;
   padding: 8px 12px;
-  font-size: 10px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.07em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-3);
   border-bottom: 1px solid var(--border);
@@ -306,7 +310,7 @@ html:not(.dark) .nav-item-active {
 }
 
 .data-table tbody tr {
-  transition: background 0.1s;
+  transition: background 0.08s;
 }
 
 .data-table tbody tr:hover td {
@@ -314,17 +318,20 @@ html:not(.dark) .nav-item-active {
   color: var(--text-1);
 }
 
+/* ── Modal ──────────────────────────────────────────────────────────────── */
 .modal-surface {
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-2);
   border-radius: 12px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45), 0 4px 16px rgba(0,0,0,0.2);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0,0,0,0.2);
 }
 
 html:not(.dark) .modal-surface {
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0,0,0,0.06);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.10), 0 2px 8px rgba(0,0,0,0.05);
+  border-color: var(--border);
 }
 
+/* ── Empty state ────────────────────────────────────────────────────────── */
 .empty-state {
   display: grid;
   place-items: center;
@@ -333,21 +340,24 @@ html:not(.dark) .modal-surface {
   font-size: 13px;
 }
 
+/* ── Notice ─────────────────────────────────────────────────────────────── */
 .notice {
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 7px;
   padding: 12px 14px;
   font-size: 13px;
   color: var(--text-2);
   line-height: 1.55;
 }
 
+/* ── Sidebar backdrop ───────────────────────────────────────────────────── */
 .sidebar-backdrop {
-  background: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(6px);
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
 }
 
+/* ── Segmented control ──────────────────────────────────────────────────── */
 .segmented-control {
   display: inline-flex;
   align-items: center;
@@ -365,14 +375,30 @@ html:not(.dark) .modal-surface {
   color: var(--segmented-inactive-text);
   font-size: 12px;
   font-weight: 500;
-  transition: background 0.12s, color 0.12s;
+  transition: background 0.1s, color 0.1s;
 }
 
 .segmented-control button[data-active="true"] {
   background: var(--segmented-active-bg);
   color: var(--segmented-active-text);
   font-weight: 600;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.10);
+}
+
+/* ── Nav group collapse animation ───────────────────────────────────────── */
+.nav-group-items {
+  overflow: hidden;
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+}
+
+.nav-group-items[data-open="true"] {
+  max-height: 400px;
+  opacity: 1;
+}
+
+.nav-group-items[data-open="false"] {
+  max-height: 0;
+  opacity: 0;
 }
 
 /* ── Tailwind graphite overrides for light mode ─────────────────────────── */
@@ -393,7 +419,7 @@ html:not(.dark) .text-graphite-600  { color: var(--text-3) !important; }
 html:not(.dark) .hover\:bg-graphite-800:hover { background-color: var(--surface-2) !important; }
 html:not(.dark) .hover\:bg-graphite-900:hover { background-color: var(--surface) !important; }
 html:not(.dark) .hover\:text-graphite-100:hover { color: var(--text-1) !important; }
-html:not(.dark) .bg-graphite-950\/95 { background-color: rgba(246, 247, 249, 0.94) !important; }
+html:not(.dark) .bg-graphite-950\/95 { background-color: rgba(244, 245, 247, 0.94) !important; }
 html:not(.dark) aside { background-color: var(--surface) !important; border-right-color: var(--border) !important; }
 html:not(.dark) .bg-graphite-600 { background-color: var(--border-2) !important; }
 html:not(.dark) .metric-value { color: var(--text-1); }
@@ -428,3 +454,17 @@ html:not(.dark) .bg-graphite-800.text-graphite-400 {
   background-color: var(--surface-2) !important;
   color: var(--text-2) !important;
 }
+
+/* ── Opacity-variant graphite overrides for light mode ──────────────────── */
+html:not(.dark) .bg-graphite-950\/60 { background-color: rgba(244,245,247,0.7) !important; }
+html:not(.dark) .bg-graphite-900\/40 { background-color: rgba(255,255,255,0.6) !important; }
+html:not(.dark) .bg-graphite-800\/40 { background-color: rgba(240,241,244,0.6) !important; }
+html:not(.dark) .bg-graphite-800\/50 { background-color: rgba(240,241,244,0.7) !important; }
+html:not(.dark) .bg-graphite-800\/60 { background-color: rgba(240,241,244,0.8) !important; }
+html:not(.dark) .divide-graphite-700\/50 > * + * { border-color: rgba(226,228,236,0.6) !important; }
+html:not(.dark) .divide-graphite-700\/60 > * + * { border-color: rgba(226,228,236,0.8) !important; }
+html:not(.dark) .border-graphite-700\/60 { border-color: rgba(226,228,236,0.8) !important; }
+html:not(.dark) .hover\:bg-graphite-800\/40:hover { background-color: rgba(240,241,244,0.5) !important; }
+html:not(.dark) .hover\:bg-graphite-800\/60:hover { background-color: rgba(240,241,244,0.7) !important; }
+html:not(.dark) .border-amber-800\/40 { border-color: rgba(180,83,9,0.3) !important; }
+html:not(.dark) .bg-amber-950\/30 { background-color: rgba(255,247,237,0.8) !important; }

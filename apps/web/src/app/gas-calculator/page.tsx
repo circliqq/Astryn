@@ -108,6 +108,7 @@ export default function GasCalculatorPage() {
   // Wallet balance checker
   const [walletBalance,    setWalletBalance]    = useState("");
   const [balanceMode,      setBalanceMode]      = useState<"full" | "gas">("full");
+  const [balanceCurrency,  setBalanceCurrency]  = useState<"eth" | "usdc">("eth");
 
   // Apply to wallet gas settings
   const [selectedWalletId, setSelectedWalletId] = useState("");
@@ -167,7 +168,12 @@ export default function GasCalculatorPage() {
   const wallets   = Math.max(1, parseInt(walletCount,  10) || 1);
   const qty       = Math.max(1, parseInt(qtyPerWallet, 10) || 1);
   const mintPrice = num(mintPriceEth, 0);
-  const balanceEth = num(walletBalance, -1); // -1 = not entered
+  const rawBalance = num(walletBalance, -1); // -1 = not entered
+  const balanceEth = rawBalance < 0
+    ? -1
+    : balanceCurrency === "usdc" && ethUsd > 0
+      ? rawBalance / ethUsd
+      : rawBalance;
 
   // ── Recommended gwei (speed tier) ────────────────────────────────────────
   const recPri    = Math.max(tier.priBase[network], liveP * 1.1);
@@ -435,51 +441,87 @@ export default function GasCalculatorPage() {
               <div>
                 <p className="text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>Wallet Balance Checker</p>
                 <p className="mt-0.5 text-[12px]" style={{ color: "var(--text-3)" }}>
-                  Enter your wallet&apos;s ETH balance — see the max gwei you can afford and which speed tiers are reachable.
+                  Enter your wallet balance in ETH or USDC — see the max gwei you can afford and which speed tiers are reachable.
                 </p>
               </div>
               <Wallet size={18} style={{ color: "var(--text-3)" }} />
             </div>
             <div className="p-5 space-y-4">
-              {/* Mode toggle */}
-              <div
-                className="flex items-center gap-1 rounded-md p-1 w-fit"
-                style={{ border: "1px solid var(--border)", background: "var(--surface)" }}
-              >
-                <button
-                  type="button"
-                  onClick={() => setBalanceMode("full")}
-                  className="rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
-                  style={balanceMode === "full"
-                    ? { background: "var(--brand)", color: "#fff" }
-                    : { color: "var(--text-3)" }}>
-                  Full Balance
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setBalanceMode("gas")}
-                  className="rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
-                  style={balanceMode === "gas"
-                    ? { background: "var(--brand)", color: "#fff" }
-                    : { color: "var(--text-3)" }}>
-                  Gas Budget Only
-                </button>
+              {/* Toggles row */}
+              <div className="flex flex-wrap items-center gap-3">
+                {/* Mode toggle */}
+                <div
+                  className="flex items-center gap-1 rounded-md p-1 w-fit"
+                  style={{ border: "1px solid var(--border)", background: "var(--surface)" }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setBalanceMode("full")}
+                    className="rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
+                    style={balanceMode === "full"
+                      ? { background: "var(--brand)", color: "#fff" }
+                      : { color: "var(--text-3)" }}>
+                    Full Balance
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBalanceMode("gas")}
+                    className="rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
+                    style={balanceMode === "gas"
+                      ? { background: "var(--brand)", color: "#fff" }
+                      : { color: "var(--text-3)" }}>
+                    Gas Budget Only
+                  </button>
+                </div>
+
+                {/* Currency toggle */}
+                <div
+                  className="flex items-center gap-1 rounded-md p-1 w-fit"
+                  style={{ border: "1px solid var(--border)", background: "var(--surface)" }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => { setBalanceCurrency("eth"); setWalletBalance(""); }}
+                    className="rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
+                    style={balanceCurrency === "eth"
+                      ? { background: "var(--surface-3)", color: "var(--text-1)" }
+                      : { color: "var(--text-3)" }}>
+                    ETH
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setBalanceCurrency("usdc"); setWalletBalance(""); }}
+                    className="rounded px-3 py-1.5 text-[11px] font-semibold transition-colors"
+                    style={balanceCurrency === "usdc"
+                      ? { background: "var(--surface-3)", color: "var(--text-1)" }
+                      : { color: "var(--text-3)" }}>
+                    USDC
+                  </button>
+                </div>
               </div>
+
               <p className="text-[11px]" style={{ color: "var(--text-3)" }}>
                 {balanceMode === "full"
-                  ? "Wallet total ETH — mint fee auto subtracted to get gas budget."
-                  : "ETH set aside for gas only — mint fee not included."}
+                  ? `Wallet total ${balanceCurrency === "usdc" ? "USDC" : "ETH"} — mint fee auto subtracted to get gas budget.`
+                  : `${balanceCurrency === "usdc" ? "USDC" : "ETH"} set aside for gas only — mint fee not included.`}
+                {balanceCurrency === "usdc" && ethUsd <= 0 && (
+                  <span className="ml-1 text-status-red-text">(ETH price unavailable — conversion paused)</span>
+                )}
               </p>
 
               <label>
                 <span className="mb-1 block text-[11px] font-medium uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>
-                  {balanceMode === "full" ? "Wallet balance (ETH)" : "Gas budget (ETH)"}
+                  {balanceMode === "full"
+                    ? `Wallet balance (${balanceCurrency === "usdc" ? "USDC" : "ETH"})`
+                    : `Gas budget (${balanceCurrency === "usdc" ? "USDC" : "ETH"})`}
                 </span>
                 <Input
                   type="number" min="0" step="any"
                   value={walletBalance}
                   onChange={e => setWalletBalance(e.target.value)}
-                  placeholder={balanceMode === "full" ? "e.g. 0.08" : "e.g. 0.01"}
+                  placeholder={balanceCurrency === "usdc"
+                    ? (balanceMode === "full" ? "e.g. 200" : "e.g. 30")
+                    : (balanceMode === "full" ? "e.g. 0.08" : "e.g. 0.01")}
                   className="max-w-[240px]"
                 />
               </label>
@@ -493,7 +535,13 @@ export default function GasCalculatorPage() {
                       <p className="text-[10px] uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>Balance</p>
                       <p className="mt-2 font-mono text-[22px] font-bold leading-none" style={{ color: "var(--text-1)" }}>{f6(balanceEth)}</p>
                       <p className="mt-0.5 text-[11px] font-semibold" style={{ color: "var(--text-2)" }}>ETH</p>
-                      {ethUsd > 0 && <p className="mt-1.5 text-[12px]" style={{ color: "var(--text-3)" }}>${f2(balanceEth * ethUsd)}</p>}
+                      {ethUsd > 0 && (
+                        <p className="mt-1.5 text-[12px]" style={{ color: "var(--text-3)" }}>
+                          {balanceCurrency === "usdc"
+                            ? `≈ $${f2(num(walletBalance, 0))} USDC`
+                            : `$${f2(balanceEth * ethUsd)}`}
+                        </p>
+                      )}
                     </div>
                     <div className="panel-section p-4">
                       <p className="text-[10px] uppercase tracking-[0.08em]" style={{ color: "var(--text-3)" }}>

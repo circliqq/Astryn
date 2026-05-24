@@ -2,57 +2,64 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import {
-  Activity, BarChart3, Bell, BellRing, Calculator, ClipboardCheck, Coins, Crosshair, Fuel, Home, Layers, ListTodo,
-  PieChart, Puzzle, Radar, ScrollText, SendHorizonal, Settings, ShieldCheck, TrendingDown, Vault, Wallet, X,
-  Flame,
+  Activity, BarChart3, Bell, BellRing, Calculator, ChevronDown,
+  ClipboardCheck, Coins, Crosshair, Flame, Fuel, Home, Layers, ListTodo,
+  PieChart, Puzzle, Radar, ScrollText, SendHorizonal, Settings, ShieldCheck,
+  TrendingDown, Vault, Wallet, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // ── Nav structure ─────────────────────────────────────────────────────────
 
 interface NavItem  { href: string; label: string; icon: React.ElementType }
-interface NavGroup { title: string; items: NavItem[] }
+interface NavGroup { title: string; items: NavItem[]; defaultOpen?: boolean }
 
 const NAV_GROUPS: NavGroup[] = [
   {
-    title: "Core",
+    title: "Overview",
+    defaultOpen: true,
     items: [
-      { href: "/dashboard",  label: "Dashboard",   icon: Home   },
-      { href: "/wallets",    label: "Wallet Vault", icon: Wallet },
+      { href: "/dashboard", label: "Dashboard",    icon: Home   },
+      { href: "/wallets",   label: "Wallet Vault", icon: Wallet },
     ],
   },
   {
     title: "Minting",
+    defaultOpen: true,
     items: [
-      { href: "/scanner",            label: "Scanner",               icon: Radar          },
-      { href: "/mint-tasks",         label: "Mint Tasks",            icon: ListTodo       },
-      { href: "/direct-mint",        label: "Direct Contract Mint",  icon: Puzzle         },
-      { href: "/whitelist-checker",  label: "Whitelist Check",       icon: ClipboardCheck },
-      { href: "/gas-settings",       label: "Gas Settings",          icon: Fuel           },
-      { href: "/gas-calculator",     label: "Gas Calculator",        icon: Calculator     },
+      { href: "/scanner",           label: "Scanner",              icon: Radar          },
+      { href: "/mint-tasks",        label: "Mint Tasks",           icon: ListTodo       },
+      { href: "/direct-mint",       label: "Direct Mint",          icon: Puzzle         },
+      { href: "/whitelist-checker", label: "Whitelist Check",      icon: ClipboardCheck },
+      { href: "/gas-settings",      label: "Gas Settings",         icon: Fuel           },
+      { href: "/gas-calculator",    label: "Gas Calculator",       icon: Calculator     },
     ],
   },
   {
     title: "Finance",
+    defaultOpen: true,
     items: [
-      { href: "/funding",       label: "Funding Assistant",   icon: Coins         },
-      { href: "/distributor",   label: "ETH Distributor",     icon: SendHorizonal },
-      { href: "/consolidation", label: "Auto-Consolidation",  icon: Vault         },
+      { href: "/funding",       label: "Funding",          icon: Coins         },
+      { href: "/distributor",   label: "ETH Distributor",  icon: SendHorizonal },
+      { href: "/consolidation", label: "Consolidation",    icon: Vault         },
     ],
   },
   {
-    title: "Sniping & Trading",
+    title: "Trading",
+    defaultOpen: false,
     items: [
-      { href: "/sniper",       label: "Sniper",          icon: Crosshair    },
-      { href: "/sweep-alerts", label: "Sweep Alerts",    icon: TrendingDown },
-      { href: "/mint-alerts",  label: "Mint Alerts",     icon: BellRing     },
-      { href: "/portfolio",    label: "Portfolio & PnL", icon: PieChart     },
-      { href: "/traits",       label: "Trait Explorer",  icon: Layers       },
+      { href: "/sniper",       label: "Sniper",         icon: Crosshair    },
+      { href: "/sweep-alerts", label: "Sweep Alerts",   icon: TrendingDown },
+      { href: "/mint-alerts",  label: "Mint Alerts",    icon: BellRing     },
+      { href: "/portfolio",    label: "Portfolio & PnL", icon: PieChart    },
+      { href: "/traits",       label: "Trait Explorer", icon: Layers       },
     ],
   },
   {
     title: "Monitoring",
+    defaultOpen: false,
     items: [
       { href: "/reports",    label: "Reports",    icon: BarChart3  },
       { href: "/rpc-health", label: "RPC Health", icon: Activity   },
@@ -61,10 +68,11 @@ const NAV_GROUPS: NavGroup[] = [
   },
   {
     title: "System",
+    defaultOpen: false,
     items: [
-      { href: "/notifications", label: "Notifications", icon: Bell       },
-      { href: "/settings",      label: "Settings",      icon: Settings   },
-      { href: "/admin",         label: "Admin Panel",   icon: ShieldCheck },
+      { href: "/notifications", label: "Notifications", icon: Bell        },
+      { href: "/settings",      label: "Settings",      icon: Settings    },
+      { href: "/admin",         label: "Admin",         icon: ShieldCheck },
     ],
   },
 ];
@@ -75,24 +83,18 @@ function Logo() {
   return (
     <div className="flex items-center gap-2.5">
       <span
-        className="grid size-[28px] shrink-0 place-items-center rounded-[7px] leading-none text-white"
-        style={{
-          background: "linear-gradient(135deg, #FF6B35 0%, #E55A25 100%)",
-          boxShadow: "0 2px 8px rgba(255,107,53,0.35)",
-        }}
+        className="grid size-[28px] shrink-0 place-items-center rounded-[8px] leading-none text-white"
+        style={{ background: "var(--brand)" }}
       >
         <Flame size={14} strokeWidth={2.2} />
       </span>
       <div className="flex flex-col leading-none">
-        <span
-          className="text-[13px] font-bold tracking-tight"
-          style={{ color: "var(--text-1)" }}
-        >
+        <span className="text-[13px] font-semibold tracking-tight" style={{ color: "var(--text-1)" }}>
           Astryn
         </span>
         <span
-          className="text-[9.5px] font-medium tracking-widest uppercase"
-          style={{ color: "var(--text-3)", letterSpacing: "0.12em" }}
+          className="text-[9px] font-medium uppercase tracking-widest"
+          style={{ color: "var(--text-3)", letterSpacing: "0.14em" }}
         >
           Gas War
         </span>
@@ -101,9 +103,89 @@ function Logo() {
   );
 }
 
+// ── Collapsible nav group ─────────────────────────────────────────────────
+
+function NavGroupSection({
+  group,
+  pathname,
+  isOpen,
+  onToggle,
+  onClose,
+}: {
+  group: NavGroup;
+  pathname: string;
+  isOpen: boolean;
+  onToggle: () => void;
+  onClose?: () => void;
+}) {
+  // If any item in this group is active, keep group open visually regardless
+  const hasActive = group.items.some(
+    (item) => pathname === item.href || pathname.startsWith(item.href + "/")
+  );
+  const expanded = isOpen || hasActive;
+
+  return (
+    <div>
+      {/* Group header */}
+      <button
+        type="button"
+        className="nav-group-toggle"
+        onClick={onToggle}
+        aria-expanded={expanded}
+      >
+        <span className="label" style={{ letterSpacing: "0.08em" }}>
+          {group.title}
+        </span>
+        <ChevronDown
+          size={11}
+          style={{
+            color: "var(--text-3)",
+            transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
+            transition: "transform 0.18s ease",
+            flexShrink: 0,
+          }}
+        />
+      </button>
+
+      {/* Group items */}
+      <div
+        className="nav-group-items mt-0.5 space-y-[1px]"
+        data-open={String(expanded)}
+      >
+        {group.items.map((item) => {
+          const Icon = item.icon;
+          const active = pathname === item.href || pathname.startsWith(item.href + "/");
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              onClick={onClose}
+              className={cn("nav-item min-h-[30px]", active && "nav-item-active")}
+            >
+              <Icon size={14} strokeWidth={active ? 2.2 : 1.7} />
+              <span className="truncate">{item.label}</span>
+            </Link>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ── Shared nav content ────────────────────────────────────────────────────
 
 function NavContent({ pathname, onClose }: { pathname: string; onClose?: () => void }) {
+  // Initialise open state from defaults (no localStorage to avoid SSR issues)
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    NAV_GROUPS.forEach((g) => { initial[g.title] = g.defaultOpen ?? true; });
+    return initial;
+  });
+
+  function toggleGroup(title: string) {
+    setOpenGroups((prev) => ({ ...prev, [title]: !prev[title] }));
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* Logo */}
@@ -121,49 +203,29 @@ function NavContent({ pathname, onClose }: { pathname: string; onClose?: () => v
         )}
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 space-y-4 overflow-y-auto">
+      {/* Nav groups */}
+      <nav className="flex-1 space-y-3 overflow-y-auto">
         {NAV_GROUPS.map((group) => (
-          <div key={group.title}>
-            <p
-              className="label mb-1 px-2.5"
-              style={{ letterSpacing: "0.09em" }}
-            >
-              {group.title}
-            </p>
-            <div className="space-y-[1px]">
-              {group.items.map((item) => {
-                const Icon = item.icon;
-                const active = pathname === item.href || pathname.startsWith(item.href + "/");
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={onClose}
-                    className={cn("nav-item min-h-[30px]", active && "nav-item-active")}
-                  >
-                    <Icon size={14} strokeWidth={active ? 2.2 : 1.7} />
-                    <span className="truncate">{item.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
+          <NavGroupSection
+            key={group.title}
+            group={group}
+            pathname={pathname}
+            isOpen={openGroups[group.title] ?? (group.defaultOpen ?? true)}
+            onToggle={() => toggleGroup(group.title)}
+            onClose={onClose}
+          />
         ))}
       </nav>
 
-      {/* Footer */}
-      <div
-        className="mt-4 border-t pt-3"
-        style={{ borderColor: "var(--border)" }}
-      >
+      {/* Footer status */}
+      <div className="mt-4 border-t pt-3" style={{ borderColor: "var(--border)" }}>
         <div
-          className="flex items-center gap-2.5 rounded-[6px] px-2 py-2"
+          className="flex items-center gap-2.5 rounded-[7px] px-2.5 py-2"
           style={{ background: "var(--surface-2)" }}
         >
           <span
             className="grid size-[22px] shrink-0 place-items-center rounded-full text-[10px] font-bold text-white"
-            style={{ background: "linear-gradient(135deg, #FF6B35 0%, #E55A25 100%)" }}
+            style={{ background: "var(--brand)" }}
           >
             G
           </span>
@@ -173,10 +235,7 @@ function NavContent({ pathname, onClose }: { pathname: string; onClose?: () => v
             </p>
             <p className="text-[10px]" style={{ color: "var(--text-3)" }}>v1.0 · Active</p>
           </div>
-          <span
-            className="size-[6px] shrink-0 rounded-full"
-            style={{ background: "#34D058" }}
-          />
+          <span className="size-[6px] shrink-0 rounded-full" style={{ background: "#3DB860" }} />
         </div>
       </div>
     </div>
@@ -189,7 +248,7 @@ export function Sidebar() {
   const pathname = usePathname();
   return (
     <aside
-      className="sticky top-0 hidden h-screen w-[220px] shrink-0 flex-col border-r px-3 py-4 lg:flex"
+      className="sticky top-0 hidden h-screen w-[210px] shrink-0 flex-col border-r px-3 py-4 lg:flex"
       style={{
         background: "var(--surface)",
         borderColor: "var(--border)",
@@ -213,19 +272,19 @@ export function MobileSidebar({ open, onClose }: { open: boolean; onClose: () =>
         aria-hidden
       />
       <aside
-        className="fixed inset-y-0 left-0 z-50 flex w-[220px] flex-col overflow-y-auto border-r px-3 py-4 lg:hidden"
+        className="fixed inset-y-0 left-0 z-50 flex w-[210px] flex-col overflow-y-auto border-r px-3 py-4 lg:hidden"
         style={{
           background: "var(--surface)",
           borderColor: "var(--border)",
-          animation: "slideInLeft 0.18s ease forwards",
+          animation: "slideInLeft 0.16s ease forwards",
         }}
       >
         <NavContent pathname={pathname} onClose={onClose} />
       </aside>
       <style>{`
         @keyframes slideInLeft {
-          from { transform: translateX(-100%); }
-          to   { transform: translateX(0); }
+          from { transform: translateX(-100%); opacity: 0.6; }
+          to   { transform: translateX(0);     opacity: 1; }
         }
       `}</style>
     </>

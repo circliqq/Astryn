@@ -91,7 +91,8 @@ export default function LogsPage() {
       <div className="space-y-5">
         <Panel className="p-4">
           <select
-            className="h-8 w-full rounded-md border border-graphite-700 bg-graphite-800 px-3 text-[13px] text-graphite-100 focus:border-brand focus:outline-none"
+            className="h-8 w-full rounded-[7px] border px-3 text-[13px] focus:outline-none transition-colors"
+            style={{ background: "var(--surface-2)", borderColor: "var(--border-2)", color: "var(--text-1)" }}
             value={selectedId}
             onChange={(e) => { setSelectedId(e.target.value); setLiveLogs([]); }}
           >
@@ -107,11 +108,11 @@ export default function LogsPage() {
         {selectedId ? (
           <div className="grid gap-5 xl:grid-cols-[220px_1fr]">
             <Panel className="p-4">
-              <p className="mb-3 text-[11px] font-medium uppercase tracking-[0.04em] text-graphite-500">Execution Steps</p>
+              <p className="label mb-3">Execution Steps</p>
               {STEPS.map((step) => (
                 <div key={step} className="flex items-start gap-2.5 pb-4 last:pb-0">
-                  <span className="mt-[5px] size-[5px] shrink-0 rounded-full bg-graphite-600" />
-                  <p className="text-[12px] text-graphite-400">{step}</p>
+                  <span className="mt-[5px] size-[5px] shrink-0 rounded-full" style={{ background: "var(--border-2)" }} />
+                  <p className="text-[12px]" style={{ color: "var(--text-2)" }}>{step}</p>
                 </div>
               ))}
             </Panel>
@@ -119,12 +120,12 @@ export default function LogsPage() {
             <div className="space-y-5">
               <Panel className="p-4">
                 <div className="mb-3 flex items-center justify-between">
-                  <h2 className="text-[13px] font-semibold text-graphite-100">Live Logs</h2>
+                  <h2 className="text-[13px] font-semibold" style={{ color: "var(--text-1)" }}>Live Logs</h2>
                   <Button variant="secondary" className="h-8" onClick={() => setLiveLogs([])}>
                     Clear
                   </Button>
                 </div>
-                <pre className="terminal min-h-[280px] overflow-auto rounded-md border border-graphite-700 p-4 text-xs leading-6">
+                <pre className="min-h-[280px] overflow-auto rounded-[7px] border p-4 text-xs leading-6 font-mono" style={{ background: "var(--surface-2)", borderColor: "var(--border)", color: "var(--text-2)" }}>
                   {liveLogs.length > 0 ? liveLogs.join("\n") : "No logs yet."}
                 </pre>
               </Panel>
@@ -145,13 +146,13 @@ export default function LogsPage() {
                           const wallet = walletMap.get(tx.walletId);
                           return (
                             <tr key={tx.id}>
-                              <td className="font-mono text-[11px] text-graphite-300" data-wallet-address>
+                              <td className="font-mono text-[11px]" style={{ color: "var(--text-2)" }} data-wallet-address>
                                 {wallet?.address ?? tx.walletId.slice(0, 12)}
                               </td>
                               <td>
                                 <StatusPill status={TX_STATUS[tx.status] ?? tx.status} />
                               </td>
-                              <td className="font-mono text-[11px] text-graphite-400">
+                              <td className="font-mono text-[11px]" style={{ color: "var(--text-3)" }}>
                                 {tx.txHash ?? "—"}
                               </td>
                               <td className="tabular-nums">
@@ -172,11 +173,11 @@ export default function LogsPage() {
         ) : (
           <Panel>
             <div className="flex flex-col items-center px-6 py-12 text-center">
-              <div className="grid size-[52px] place-items-center rounded-full bg-[#1E2028]">
-                <ScrollText size={24} className="text-graphite-500" />
+              <div className="grid size-[52px] place-items-center rounded-full" style={{ background: "var(--surface-2)" }}>
+                <ScrollText size={24} style={{ color: "var(--text-3)" }} />
               </div>
-              <p className="mt-3 text-[13px] font-medium text-graphite-200">No task selected</p>
-              <p className="mt-1 text-[12px] text-graphite-500">Select a task above to view its execution logs.</p>
+              <p className="mt-3 text-[13px] font-medium" style={{ color: "var(--text-2)" }}>No task selected</p>
+              <p className="mt-1 text-[12px]" style={{ color: "var(--text-3)" }}>Select a task above to view its execution logs.</p>
             </div>
           </Panel>
         )}
