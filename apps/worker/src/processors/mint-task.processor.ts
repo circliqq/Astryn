@@ -741,6 +741,17 @@ export async function executeMintTask(
                   })
                   .catch(() => undefined)
               : Promise.resolve(),
+            // Bloxroute BDN — direct validator peering, lower propagation latency.
+            isEthereum && process.env["BLOXROUTE_AUTH_HEADER"]
+              ? sendToBloxroute(preparedMint.signedTx)
+                  .then(() => {
+                    void log(prisma, task.id, "info",
+                      `Bloxroute BDN submitted for wallet ${shortAddress(preparedMint.walletAddress)}.`,
+                      { walletId: preparedMint.walletId },
+                    ).catch(() => undefined);
+                  })
+                  .catch(() => undefined)
+              : Promise.resolve(),
             // Base fast endpoints — parallel submit to sequencer-peered RPCs.
             !isEthereum
               ? sendToBaseEndpoints(preparedMint.signedTx)
@@ -1018,6 +1029,10 @@ export async function executeMintTask(
                     : Promise.resolve(),
                   network === "base"
                     ? sendToBaseEndpoints(bumpedSignedTx).catch(() => undefined)
+                    : Promise.resolve(),
+                  // Bloxroute BDN on bump — keeps validator coverage on re-broadcast.
+                  network === "ethereum" && process.env["BLOXROUTE_AUTH_HEADER"]
+                    ? sendToBloxroute(bumpedSignedTx).catch(() => undefined)
                     : Promise.resolve(),
                 ]);
 
@@ -2259,6 +2274,34 @@ async function sendToFreeBuilders(signedTx: Hex): Promise<void> {
       });
     }),
   );
+}
+// ──────────────────────────────────────────────────────────────────────────
+
+// ── Bloxroute BDN broadcast ───────────────────────────────────────────────
+//
+// Routes via Bloxroute's Blockchain Distribution Network — direct peering
+// with validators/block builders, lower propagation latency than standard P2P.
+// Free tier: transaction submission only, no extra cost.
+// Auth header from BLOXROUTE_AUTH_HEADER env var.
+// ETH only — Base uses sequencer-direct endpoints instead.
+
+async function sendToBloxroute(signedTx: Hex): Promise<void> {
+  const authHeader = process.env["BLOXROUTE_AUTH_HEADER"];
+  if (!authHeader) return;
+  await fetch("https://virginia.eth.blxrbdn.com", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": authHeader,
+    },
+    body: JSON.stringify({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "eth_sendRawTransaction",
+      params: [signedTx],
+    }),
+    signal: AbortSignal.timeout(2_000),
+  }).catch(() => undefined);
 }
 // ──────────────────────────────────────────────────────────────────────────
 
