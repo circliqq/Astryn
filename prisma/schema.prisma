@@ -99,6 +99,7 @@ model User {
   usageMetrics       UsageMetric[]
   featureFlagsUpdated FeatureFlag[]         @relation("FeatureFlagUpdater")
   directMintTasks     DirectMintTask[]
+  trackedWallets      TrackedWallet[]
 
   @@index([role])
   @@index([bannedAt])
@@ -826,6 +827,44 @@ model UsageMetric {
   @@unique([userId, metric, date])
   @@index([metric, date])
   @@index([date])
+}
+
+// ── Trader Wallet Tracker ─────────────────────────────────────────────────
+
+model TrackedWallet {
+  id            String             @id @default(uuid())
+  userId        String
+  address       String
+  nickname      String
+  network       Network
+  enabled       Boolean            @default(true)
+  lastCheckedAt DateTime?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  user          User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  purchases     TraderPurchaseLog[]
+
+  @@unique([userId, address, network])
+  @@index([userId])
+  @@index([enabled])
+}
+
+model TraderPurchaseLog {
+  id              String        @id @default(uuid())
+  trackedWalletId String
+  collectionSlug  String
+  collectionName  String?
+  nftName         String?
+  imageUrl        String?
+  priceEth        Float
+  quantity        Int           @default(1)
+  source          String?
+  txHash          String?
+  eventTimestamp  DateTime
+  detectedAt      DateTime      @default(now())
+  trackedWallet   TrackedWallet @relation(fields: [trackedWalletId], references: [id], onDelete: Cascade)
+
+  @@index([trackedWalletId, detectedAt])
 }
 
 // ── Direct Contract Mint ──────────────────────────────────────────────────

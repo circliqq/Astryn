@@ -1745,6 +1745,9 @@ async function waitWithRollingSimulation(
   // MINT_POST_OPEN_GRACE_MS (default 30 min) so the bot catches the real open.
   // Set MINT_POST_OPEN_GRACE_MS=0 to disable.
   const graceMs = numberEnv("MINT_POST_OPEN_GRACE_MS", 30 * 60 * 1_000);
+  // Grace re-sim interval — much tighter than the pre-open poll so we catch
+  // the real on-chain open as fast as possible. Default 200ms.
+  const gracePollMs = numberEnv("MINT_GRACE_POLL_INTERVAL_MS", 200);
   if (graceMs > 0 && skippedIds.size > 0) {
     const graceEnd = Date.now() + graceMs;
     await log(
@@ -1754,13 +1757,14 @@ async function waitWithRollingSimulation(
       `${skippedIds.size} wallet(s) failed at scheduled open time — entering post-open grace period (${Math.round(graceMs / 60_000)}min). OpenSea API time may differ from on-chain phase start.`,
     );
     while (Date.now() < graceEnd && skippedIds.size > 0) {
-      await delay(Math.min(pollIntervalMs, Math.max(0, graceEnd - Date.now())));
-      if (skippedIds.size === 0) break;
+      // ── Simulate FIRST, delay AFTER ──────────────────────────────────
+      // Try immediately on every iteration — catch the on-chain open the
+      // instant it happens rather than sleeping through it.
       await Promise.all(
         resigned
           .filter((p) => skippedIds.has(p.taskWalletId))
           .map(async (p) => {
-            // Attempt payload refresh — API may now return valid calldata now phase is live.
+            // Attempt payload refresh — API may now return valid calldata.
             if (payloadRefresher) {
               try {
                 const freshPayload = await payloadRefresher(p.walletAddress);
@@ -1786,9 +1790,13 @@ async function waitWithRollingSimulation(
                 `Post-open grace simulation passed for wallet ${shortAddress(p.walletAddress)} — broadcasting now.`,
                 { walletId: p.walletId },
               );
-            } catch { /* still failing — keep retrying until grace expires */ }
+            } catch { /* still failing — retry after gracePollMs */ }
           }),
       );
+      // Short sleep between retries — only if wallets are still pending.
+      if (skippedIds.size > 0) {
+        await delay(Math.min(gracePollMs, Math.max(0, graceEnd - Date.now())));
+      }
     }
     // Log final outcome for any wallets that never recovered.
     for (const p of resigned.filter((p) => skippedIds.has(p.taskWalletId))) {

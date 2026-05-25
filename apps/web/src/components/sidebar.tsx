@@ -5,9 +5,9 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   Activity, BarChart3, Bell, BellRing, Calculator, ChevronDown,
-  ClipboardCheck, Coins, Crosshair, Flame, Fuel, Home, Layers, ListTodo,
+  ClipboardCheck, Coins, Crosshair, Flame, Home, ListTodo,
   PieChart, Puzzle, Radar, ScrollText, SendHorizonal, Settings, ShieldCheck,
-  TrendingDown, Vault, Wallet, X,
+  UserSearch, Vault, Wallet, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -33,7 +33,6 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/mint-tasks",        label: "Mint Tasks",           icon: ListTodo       },
       { href: "/direct-mint",       label: "Direct Mint",          icon: Puzzle         },
       { href: "/whitelist-checker", label: "Whitelist Check",      icon: ClipboardCheck },
-      { href: "/gas-settings",      label: "Gas Settings",         icon: Fuel           },
       { href: "/gas-calculator",    label: "Gas Calculator",       icon: Calculator     },
     ],
   },
@@ -50,11 +49,10 @@ const NAV_GROUPS: NavGroup[] = [
     title: "Trading",
     defaultOpen: false,
     items: [
-      { href: "/sniper",       label: "Sniper",         icon: Crosshair    },
-      { href: "/sweep-alerts", label: "Sweep Alerts",   icon: TrendingDown },
-      { href: "/mint-alerts",  label: "Mint Alerts",    icon: BellRing     },
-      { href: "/portfolio",    label: "Portfolio & PnL", icon: PieChart    },
-      { href: "/traits",       label: "Trait Explorer", icon: Layers       },
+      { href: "/sniper",          label: "Sniper",          icon: Crosshair    },
+      { href: "/trader-tracker", label: "Sweep Alerts",    icon: UserSearch   },
+      { href: "/mint-alerts",    label: "Mint Alerts",     icon: BellRing     },
+      { href: "/portfolio",      label: "Portfolio & PnL", icon: PieChart     },
     ],
   },
   {

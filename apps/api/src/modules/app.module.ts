@@ -35,6 +35,7 @@ import { WalletHealthModule } from "./domains/wallet-health.module.js";
 import { WalletsModule } from "./domains/wallets.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { DirectMintModule } from "./domains/direct-mint.module.js";
+import { TraderTrackerModule } from "./domains/trader-tracker.module.js";
 
 @Module({
   imports: [
@@ -74,6 +75,7 @@ import { DirectMintModule } from "./domains/direct-mint.module.js";
     MintAlertsModule,
     SupportModule,
     DirectMintModule,
+    TraderTrackerModule,
   ]
 })
 export class AppModule {}

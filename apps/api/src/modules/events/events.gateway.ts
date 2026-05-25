@@ -17,7 +17,8 @@ export type MintEventName =
   | "sweep.detected"
   | "direct-mint.task.created"
   | "direct-mint.task.queued"
-  | "direct-mint.task.canceled";
+  | "direct-mint.task.canceled"
+  | "trader.purchase";
 
 @WebSocketGateway({ cors: true, namespace: "/events" })
 export class EventsGateway {
