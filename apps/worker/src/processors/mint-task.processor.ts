@@ -705,8 +705,9 @@ export async function executeMintTask(
           const [broadcasts] = await Promise.all([
             pool.broadcastUntilAccepted(network, preparedMint.signedTx),
             // Flashbots bundle — targets N+1/N+2/N+3 specifically (ETH only).
+            // minTimestamp = phase open unix seconds → bundle won't land before the drop opens.
             isEthereum && flashbotsAuthKey && currentBlockNumber != null
-              ? sendFlashbotsBundle(preparedMint.signedTx, flashbotsAuthKey, currentBlockNumber)
+              ? sendFlashbotsBundle(preparedMint.signedTx, flashbotsAuthKey, currentBlockNumber, Math.floor(targetAt.getTime() / 1000))
                   .then((bundleHash) => {
                     if (bundleHash) {
                       void log(prisma, task.id, "info",
@@ -2097,6 +2098,10 @@ async function sendFlashbotsBundle(
   signedTx: Hex,
   authKey: Hex,
   targetBlockNumber: bigint,
+  /** Phase open unix timestamp (seconds). Bundle will not be included in any
+   *  block whose timestamp is earlier than this value. Prevents accidental
+   *  inclusion before the mint phase opens. */
+  minTimestamp?: number,
 ): Promise<Hex | null> {
   const endpoint = "https://relay.flashbots.net";
 
@@ -2111,16 +2116,22 @@ async function sendFlashbotsBundle(
   const account = privateKeyToAccount(authKey);
 
   const sendBundle = async (blockNumber: bigint) => {
+    const bundleParams: Record<string, unknown> = {
+      txs: [signedTx],
+      blockNumber: `0x${blockNumber.toString(16)}`,
+    };
+    // minTimestamp prevents the bundle landing in a block before phase open.
+    // maxTimestamp = minTimestamp + 120s — bundle expires if not included quickly.
+    if (minTimestamp != null) {
+      bundleParams.minTimestamp = minTimestamp;
+      bundleParams.maxTimestamp = minTimestamp + 120;
+    }
+
     const body = JSON.stringify({
       jsonrpc: "2.0",
       id: 1,
       method: "eth_sendBundle",
-      params: [
-        {
-          txs: [signedTx],
-          blockNumber: `0x${blockNumber.toString(16)}`,
-        },
-      ],
+      params: [bundleParams],
     });
 
     const sig = await account.signMessage({
@@ -2216,6 +2227,8 @@ const FREE_BUILDER_ENDPOINTS = [
   { name: "Ultra Sound",   url: "https://rpc.ultrasound.money" },
   { name: "Payload",       url: "https://rpc.payload.de" },
   { name: "Loki",          url: "https://builder.loki.build" },
+  // f1b — emerging builder with direct validator relationships.
+  { name: "f1b",           url: "https://rpc.f1b.io" },
   // MEV Blocker — private routing to 30+ builders, no frontrunning exposure.
   // Free, no auth. Internally aggregates more builders than we can list here.
   { name: "MEV Blocker",   url: "https://rpc.mevblocker.io" },
