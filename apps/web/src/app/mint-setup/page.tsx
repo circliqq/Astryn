@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Flame,
   Repeat2,
+  Shield,
   WalletCards,
   Zap,
 } from "lucide-react";
@@ -180,6 +181,14 @@ function MintSetupContent() {
   const [flipperMinPrice, setFlipperMinPrice]       = useState("");
   const [flipperMaxPerWallet, setFlipperMaxPerWallet] = useState("1");
 
+  // ── Priority Mode state ───────────────────────────────────────────────────────
+  const [priorityModeEnabled, setPriorityModeEnabled] = useState(false);
+  const [priorityModeOpen, setPriorityModeOpen]       = useState(false);
+  const [priorityMaxTx, setPriorityMaxTx]             = useState("");
+  const [prioritySupplyBuffer, setPrioritySupplyBuffer] = useState("");
+  // Ordered list of selected wallet IDs — first = highest priority
+  const [priorityWalletOrder, setPriorityWalletOrder] = useState<string[]>([]);
+
   // ── Data fetching ─────────────────────────────────────────────────────────────
 
   const { data: wallets = [] } = useQuery<Wallet[]>({
@@ -268,6 +277,15 @@ function MintSetupContent() {
 
   // Reset confirmation when phase changes
   useEffect(() => { setEligibilityConfirmed(false); }, [collectionId, phaseType]);
+
+  // Sync priority wallet order: add newly selected wallets to end, remove deselected ones
+  useEffect(() => {
+    setPriorityWalletOrder((prev) => {
+      const kept = prev.filter((id) => selectedWalletIds.includes(id));
+      const added = selectedWalletIds.filter((id) => !prev.includes(id));
+      return [...kept, ...added];
+    });
+  }, [selectedWalletIds]);
 
   // ── Auto per-wallet eligibility check when phase/collection changes ───────
   useEffect(() => {
@@ -416,6 +434,13 @@ function MintSetupContent() {
             fixedPriceEth: flipperPriceMode === "fixed" ? Number(flipperFixedPrice) || undefined : undefined,
             minPriceEth: flipperMinPrice ? Number(flipperMinPrice) : undefined,
             maxPerWallet: Math.max(1, Number.parseInt(flipperMaxPerWallet, 10) || 1),
+          } : { enabled: false },
+          priorityWalletIds: priorityModeEnabled ? priorityWalletOrder : undefined,
+          priorityMinting: priorityModeEnabled ? {
+            enabled: true,
+            maxTransactions: priorityMaxTx ? Math.max(1, Number.parseInt(priorityMaxTx, 10) || 1) : undefined,
+            supplyBuffer: prioritySupplyBuffer ? Math.max(0, Number.parseInt(prioritySupplyBuffer, 10) || 0) : undefined,
+            priorityWalletIds: priorityWalletOrder,
           } : { enabled: false },
         }),
       }),
@@ -1063,6 +1088,167 @@ function MintSetupContent() {
                       {flipperMode === "auto"
                         ? `After mint: auto-list up to ${flipperMaxPerWallet} NFT(s)/wallet at ${flipperPriceMode === "floor_percent" ? `${Number(flipperMultiplier) * 100}% of floor` : `${flipperFixedPrice || "—"} ETH`}${flipperMinPrice ? ` (min ${flipperMinPrice} ETH)` : ""}.`
                         : `Manual mode: use "Flip Now" button in Mint Tasks after mint completes.`}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Panel>
+
+            {/* ── Priority Mode ── */}
+            <Panel>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between p-4"
+                onClick={() => setPriorityModeOpen((o) => !o)}
+              >
+                <div className="flex items-center gap-3">
+                  <div className={`grid size-8 place-items-center rounded-md ${priorityModeEnabled ? "bg-brand/20" : "bg-graphite-800"}`}>
+                    <Shield size={15} className={priorityModeEnabled ? "text-brand" : "text-graphite-400"} />
+                  </div>
+                  <div className="text-left">
+                    <div className="flex items-center gap-2">
+                      <p className="text-[13px] font-semibold text-graphite-100">Priority Mode</p>
+                      {priorityModeEnabled && <Badge tone="green">Active</Badge>}
+                    </div>
+                    <p className="text-[11px] text-graphite-500">
+                      Keep your top wallets when supply runs out.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setPriorityModeEnabled((v) => !v);
+                      if (!priorityModeOpen) setPriorityModeOpen(true);
+                    }}
+                    className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${priorityModeEnabled ? "bg-brand" : "bg-graphite-600"}`}
+                  >
+                    <span className={`inline-block size-3.5 rounded-full bg-white shadow transition-transform ${priorityModeEnabled ? "translate-x-4" : "translate-x-1"}`} />
+                  </button>
+                  {priorityModeOpen ? <ChevronUp size={14} className="text-graphite-400" /> : <ChevronDown size={14} className="text-graphite-400" />}
+                </div>
+              </button>
+
+              {priorityModeOpen && (
+                <div className="border-t border-graphite-700 px-4 pb-4 pt-4 space-y-4">
+                  {/* Info banner */}
+                  <div className="rounded-md border border-graphite-700 bg-graphite-800/50 px-3 py-2.5 text-[11px] text-graphite-400 leading-relaxed">
+                    When mint supply is tight and pending transactions exceed available supply, the bot cancels excess transactions.
+                    Priority Mode ensures your <span className="text-graphite-200 font-medium">top-ranked wallets</span> are always kept — lower-ranked ones get cancelled first.
+                  </div>
+
+                  {/* Max transactions */}
+                  <label>
+                    <span className="mb-1 block text-[11px] font-medium text-graphite-400">
+                      Max transactions{" "}
+                      <span className="text-graphite-500 font-normal">
+                        (limit how many wallets mint — others cancelled if supply tight)
+                      </span>
+                    </span>
+                    <Input
+                      type="number"
+                      min="1"
+                      max={selectedWalletIds.length || 50}
+                      value={priorityMaxTx}
+                      onChange={(e) => setPriorityMaxTx(e.target.value)}
+                      placeholder={`e.g. ${Math.max(1, Math.ceil(selectedWalletIds.length / 2))} of ${selectedWalletIds.length || "?"} wallets`}
+                    />
+                  </label>
+
+                  {/* Supply buffer */}
+                  <label>
+                    <span className="mb-1 block text-[11px] font-medium text-graphite-400">
+                      Supply buffer{" "}
+                      <span className="text-graphite-500 font-normal">(optional — cancel if remaining supply drops below this number)</span>
+                    </span>
+                    <Input
+                      type="number"
+                      min="0"
+                      value={prioritySupplyBuffer}
+                      onChange={(e) => setPrioritySupplyBuffer(e.target.value)}
+                      placeholder="e.g. 5"
+                    />
+                  </label>
+
+                  {/* Wallet priority ranking */}
+                  {priorityWalletOrder.length > 0 && (
+                    <div>
+                      <p className="mb-2 text-[11px] font-medium text-graphite-400">
+                        Wallet priority order{" "}
+                        <span className="text-graphite-500 font-normal">— use arrows to rank (top = kept first)</span>
+                      </p>
+                      <div className="space-y-1.5">
+                        {priorityWalletOrder.map((walletId, index) => {
+                          const wallet = wallets.find((w) => w.id === walletId);
+                          if (!wallet) return null;
+                          return (
+                            <div
+                              key={walletId}
+                              className="flex items-center gap-2 rounded-md border border-graphite-700 bg-graphite-800 px-3 py-2"
+                            >
+                              <span className={`w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0 ${
+                                index === 0 ? "bg-brand text-white" : "bg-graphite-700 text-graphite-400"
+                              }`}>
+                                {index + 1}
+                              </span>
+                              <div className="flex-1 min-w-0">
+                                <p className="truncate text-[12px] font-medium text-graphite-100">{wallet.name}</p>
+                                <p className="font-mono text-[10px] text-graphite-500">{wallet.address.slice(0, 10)}…</p>
+                              </div>
+                              <div className="flex gap-1 shrink-0">
+                                <button
+                                  type="button"
+                                  disabled={index === 0}
+                                  onClick={() => {
+                                    setPriorityWalletOrder((prev) => {
+                                      const next = [...prev];
+                                      [next[index - 1], next[index]] = [next[index], next[index - 1]];
+                                      return next;
+                                    });
+                                  }}
+                                  className="rounded p-1 text-graphite-500 hover:text-graphite-200 disabled:opacity-25 transition-colors"
+                                  aria-label="Move up"
+                                >
+                                  <ChevronUp size={13} />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={index === priorityWalletOrder.length - 1}
+                                  onClick={() => {
+                                    setPriorityWalletOrder((prev) => {
+                                      const next = [...prev];
+                                      [next[index + 1], next[index]] = [next[index], next[index + 1]];
+                                      return next;
+                                    });
+                                  }}
+                                  className="rounded p-1 text-graphite-500 hover:text-graphite-200 disabled:opacity-25 transition-colors"
+                                  aria-label="Move down"
+                                >
+                                  <ChevronDown size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="mt-2 text-[10px] text-graphite-600">
+                        Select wallets in the wallet panel to add them here.
+                      </p>
+                    </div>
+                  )}
+
+                  {priorityWalletOrder.length === 0 && (
+                    <div className="notice text-[11px] text-graphite-500">
+                      Select wallets above — they&apos;ll appear here for ranking.
+                    </div>
+                  )}
+
+                  {priorityModeEnabled && priorityMaxTx && (
+                    <div className="rounded-md border border-brand/20 bg-brand/5 px-3 py-2 text-[11px] text-brand">
+                      Top {priorityMaxTx} wallet(s) will be kept if supply gets tight.
+                      {prioritySupplyBuffer ? ` Cancelling when supply drops below ${prioritySupplyBuffer}.` : ""}
                     </div>
                   )}
                 </div>
