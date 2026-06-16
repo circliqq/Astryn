@@ -392,111 +392,13 @@ class CollectionsController {
         };
       }
 
-      // ── Use bulk Python result (primary) if available ───────────────────────
-      // Python returns stages like ["GTD#0", "ALLOWLIST#1", "FCFS#0"].
-      // Match against current phaseType — e.g. "GTD" matches "GTD#0".
+      // ── Python bulk result is the ONLY source of truth ─────────────────────
+      // Node.js SIWE is blocked by Cloudflare — Python curl_cffi is used exclusively.
+      // Stages are normalized: GUARANTEED→GTD, ALLOWLIST→ALLOWLIST, FCFS→FCFS.
       const pyResult = pyBulkResultByAddress.get(wallet.address.toLowerCase());
-      if (pyResult && !pyResult.error) {
-        const phaseEligible = pyResult.stages.some(
-          (s) => s.startsWith(window.phaseType) || s === window.phaseType
-        );
-        return {
-          phaseType: window.phaseType,
-          startTime: window.startTime,
-          endTime: window.endTime,
-          phaseStatus: window.phaseStatus,
-          eligible: window.phaseStatus !== "ENDED" && phaseEligible,
-          checked: true,
-          reason: phaseEligible
-            ? `Eligible for ${window.phaseType} (${pyResult.stages.join(", ")})`
-            : `Not eligible for ${window.phaseType} phase.`
-        };
-      }
 
-      try {
-        const result = await client.checkEligibility(
-          collection.slug,
-          wallet.address,
-          toOpenSeaPhase(window.phaseType),
-          {
-            chain: collection.chain.toLowerCase(),
-            contractAddress: collection.contractAddress ?? undefined,
-            signMessage: signerByWalletId.get(wallet.id)
-          }
-        );
-        return {
-          phaseType: window.phaseType,
-          startTime: window.startTime,
-          endTime: window.endTime,
-          phaseStatus: window.phaseStatus,
-          eligible: window.phaseStatus !== "ENDED" && result.eligible,
-          checked: true,
-          reason:
-            result.reason ??
-            (result.eligible
-              ? window.phaseStatus === "LIVE"
-                ? "Wallet is eligible and the phase is live."
-                : "Wallet is eligible for this phase."
-              : "Wallet is not eligible for this phase.")
-        };
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        const is404 = msg.includes("404");
-
-        // ── Allowlist fallback: on-chain / OpenSea allowlist ────────────────
-        if (is404 && collection.contractAddress) {
-          try {
-            const addressSet = await getAllowlistAddressSet();
-            if (addressSet !== null) {
-              const eligible = addressSet.has(wallet.address.toLowerCase());
-              return {
-                phaseType: window.phaseType,
-                startTime: window.startTime,
-                endTime: window.endTime,
-                phaseStatus: window.phaseStatus,
-                eligible: window.phaseStatus !== "ENDED" && eligible,
-                checked: true,
-                reason: eligible
-                  ? "Wallet found in allowlist (verified via contract/OpenSea allowlist)."
-                  : "Wallet not found in allowlist."
-              };
-            }
-          } catch { /* fall through to Python worker */ }
-        }
-
-        // ── Python worker fallback: curl_cffi Chrome TLS spoofing ───────────
-        // Used when Node.js SIWE is blocked by Cloudflare and on-chain
-        // allowlist is unavailable. Python passes Cloudflare where Node.js can't.
-        if (PYTHON_WORKER_PATH) {
-          try {
-            const privkey = privkeyByWalletId.get(wallet.id);
-            if (privkey) {
-              const pyResult = await checkEligibilityViaPython(
-                collection.slug,
-                privkey,
-                PYTHON_WORKER_PATH
-              );
-              if (!pyResult.error) {
-                return {
-                  phaseType: window.phaseType,
-                  startTime: window.startTime,
-                  endTime: window.endTime,
-                  phaseStatus: window.phaseStatus,
-                  eligible: window.phaseStatus !== "ENDED" && pyResult.eligible,
-                  checked: true,
-                  reason: pyResult.eligible
-                    ? `Eligible (${pyResult.stages.join(", ")})`
-                    : "Not eligible for any whitelist stage."
-                };
-              }
-              // Python ran but returned an error — log it and fall through
-              console.warn(`[eligibility] Python worker error for ${wallet.address}: ${pyResult.error}`);
-            }
-          } catch (pyErr) {
-            console.warn(`[eligibility] Python worker threw for ${wallet.address}:`, pyErr);
-          }
-        }
-
+      if (!pyResult) {
+        // Bulk check didn't return a result for this wallet
         return {
           phaseType: window.phaseType,
           startTime: window.startTime,
@@ -504,11 +406,39 @@ class CollectionsController {
           phaseStatus: window.phaseStatus,
           eligible: false,
           checked: false,
-          reason: is404
-            ? "Eligibility could not be verified via OpenSea API — check manually on opensea.io."
-            : msg
+          reason: "Eligibility check did not complete for this wallet."
         };
       }
+
+      if (pyResult.error) {
+        console.warn(`[eligibility] Python error for ${wallet.address}: ${pyResult.error}`);
+        return {
+          phaseType: window.phaseType,
+          startTime: window.startTime,
+          endTime: window.endTime,
+          phaseStatus: window.phaseStatus,
+          eligible: false,
+          checked: false,
+          reason: `Check failed: ${pyResult.error}`
+        };
+      }
+
+      // Match stage against current phaseType: "GTD#0".startsWith("GTD") etc.
+      const phaseEligible = pyResult.stages.some(
+        (s) => s.startsWith(window.phaseType) || s === window.phaseType
+      );
+
+      return {
+        phaseType: window.phaseType,
+        startTime: window.startTime,
+        endTime: window.endTime,
+        phaseStatus: window.phaseStatus,
+        eligible: window.phaseStatus !== "ENDED" && phaseEligible,
+        checked: true,
+        reason: phaseEligible
+          ? `Eligible for ${window.phaseType} (verified via OpenSea)`
+          : `Not eligible for ${window.phaseType} phase.`
+      };
     }
 
     // Fire all (wallet × phase) checks concurrently. Bulk Python already ran
@@ -785,30 +715,4 @@ class CollectionsByContractController {
   }
 }
 
-@Module({ controllers: [CollectionsController, CollectionsByContractController] })
-export class CollectionsModule {}
-
-function normalizeContractAddress(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (/^0x[0-9a-fA-F]{40}$/.test(trimmed)) return trimmed.toLowerCase();
-  return null;
-}
-
-function extractOpenSeaAddresses(data: Record<string, unknown>): string[] {
-  const candidates = [
-    data.addresses, data.wallets, data.allowlist, data.entries,
-    data.minters, data.eligible_addresses, data.eligible_wallets
-  ];
-  for (const c of candidates) {
-    if (Array.isArray(c) && c.length > 0) {
-      const addrs = c.map((item: unknown) =>
-        typeof item === "string" ? item :
-        typeof item === "object" && item !== null
-          ? String((item as Record<string, unknown>).address ?? (item as Record<string, unknown>).wallet ?? "")
-          : ""
-      ).filter((a: string) => /^0x[a-fA-F0-9]{40}$/.test(a));
-      if (addrs.length > 0) return addrs;
-    }
-  }
-  return [];
-}
+@Module({
