@@ -393,18 +393,23 @@ class CollectionsController {
       }
 
       // ── Use bulk Python result (primary) if available ───────────────────────
+      // Python returns stages like ["GTD#0", "ALLOWLIST#1", "FCFS#0"].
+      // Match against current phaseType — e.g. "GTD" matches "GTD#0".
       const pyResult = pyBulkResultByAddress.get(wallet.address.toLowerCase());
       if (pyResult && !pyResult.error) {
+        const phaseEligible = pyResult.stages.some(
+          (s) => s.startsWith(window.phaseType) || s === window.phaseType
+        );
         return {
           phaseType: window.phaseType,
           startTime: window.startTime,
           endTime: window.endTime,
           phaseStatus: window.phaseStatus,
-          eligible: window.phaseStatus !== "ENDED" && pyResult.eligible,
+          eligible: window.phaseStatus !== "ENDED" && phaseEligible,
           checked: true,
-          reason: pyResult.eligible
-            ? `Eligible (${pyResult.stages.join(", ")})`
-            : "Not eligible for any whitelist stage."
+          reason: phaseEligible
+            ? `Eligible for ${window.phaseType} (${pyResult.stages.join(", ")})`
+            : `Not eligible for ${window.phaseType} phase.`
         };
       }
 
