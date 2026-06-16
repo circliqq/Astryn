@@ -162,6 +162,11 @@ function MintSetupContent() {
   const [editingPhaseName, setEditingPhaseName] = useState<string | null>(null);
 
 
+  // ── Per-wallet eligibility (display only, never blocks task creation) ───────
+  // null = checking, true = eligible, false = not eligible, "unverifiable" = API can't check
+  const [walletEligibilityMap, setWalletEligibilityMap] = useState<Map<string, boolean | "unverifiable" | null>>(new Map());
+  const [isCheckingEligibility, setIsCheckingEligibility] = useState(false);
+
   // ── Instant Flipper state ─────────────────────────────────────────────────
   const [flipperEnabled, setFlipperEnabled]         = useState(false);
   const [flipperOpen, setFlipperOpen]               = useState(false);
@@ -278,6 +283,37 @@ function MintSetupContent() {
   // ── Derived values ────────────────────────────────────────────────────────────
 
 
+
+  // ── Auto eligibility check when phase/collection changes ─────────────────
+  useEffect(() => {
+    if (!collection || !collectionId || compatibleWallets.length === 0) return;
+    if (phaseType === "PUBLIC") {
+      setWalletEligibilityMap(new Map(compatibleWallets.map((w) => [w.id, true])));
+      return;
+    }
+    setIsCheckingEligibility(true);
+    setWalletEligibilityMap(new Map(compatibleWallets.map((w) => [w.id, null])));
+    apiFetch<{ wallets: Array<{ walletId: string; eligiblePhaseTypes: string[]; unverifiablePhaseTypes?: string[] }> }>(
+      `/collections/${collectionId}/eligibility-matrix`,
+      { method: "POST", body: JSON.stringify({ walletIds: compatibleWallets.map((w) => w.id) }) }
+    )
+      .then((data) => {
+        const map = new Map<string, boolean | "unverifiable">();
+        for (const w of data.wallets) {
+          if (w.eligiblePhaseTypes.includes(phaseType)) {
+            map.set(w.walletId, true);
+          } else if (w.unverifiablePhaseTypes?.includes(phaseType)) {
+            map.set(w.walletId, "unverifiable");
+          } else {
+            map.set(w.walletId, false);
+          }
+        }
+        setWalletEligibilityMap(map);
+      })
+      .catch(() => {/* keep as null */})
+      .finally(() => setIsCheckingEligibility(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [collection, collectionId, phaseType]);
 
   // Sync priority wallet order: add newly selected wallets to end, remove deselected ones
   useEffect(() => {
@@ -728,8 +764,42 @@ function MintSetupContent() {
                           {wallet.address.slice(0, 14)}…
                         </p>
 
-                        {/* Status row */}
-                        <div className="mt-2.5 flex items-center justify-end gap-2">
+                        {/* Status + eligibility row */}
+                        <div className="mt-2.5 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            {(() => {
+                              if (phaseType === "PUBLIC") {
+                                return (
+                                  <>
+                                    <CheckCircle2 size={11} className="text-status-green-text shrink-0" />
+                                    <span className="text-[10px] font-medium text-status-green-text">Eligible</span>
+                                  </>
+                                );
+                              }
+                              const walletElig = walletEligibilityMap.get(wallet.id);
+                              const isChecking = isCheckingEligibility || walletElig === null;
+                              if (walletElig === undefined) return null;
+                              if (isChecking) return <span className="text-[10px] text-graphite-500">Checking…</span>;
+                              if (walletElig === true) return (
+                                <>
+                                  <CheckCircle2 size={11} className="text-status-green-text shrink-0" />
+                                  <span className="text-[10px] font-medium text-status-green-text">Eligible</span>
+                                </>
+                              );
+                              if (walletElig === "unverifiable") return (
+                                <>
+                                  <AlertTriangle size={11} className="text-amber-400 shrink-0" />
+                                  <span className="text-[10px] font-medium text-amber-400">Unverifiable</span>
+                                </>
+                              );
+                              return (
+                                <>
+                                  <AlertTriangle size={11} className="text-red-400 shrink-0" />
+                                  <span className="text-[10px] font-medium text-red-400">Not Eligible</span>
+                                </>
+                              );
+                            })()}
+                          </div>
                           <span className={`text-[10px] font-semibold ${selected ? "text-brand" : "text-graphite-500"}`}>
                             {selected ? "✓ Selected" : wallet.status}
                           </span>
