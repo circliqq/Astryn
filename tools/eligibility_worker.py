@@ -133,28 +133,76 @@ async def check_one(slug: str, address: str, privkey: str, proxy_config) -> dict
             if r_verify.status_code != 200:
                 return {"address": address, "eligible": False, "stages": [], "error": f"Verify failed: {r_verify.status_code}"}
 
-            # 5) DropEligibilityQuery
+            # 5) DropEligibilityQuery — full query matching the reference implementation
             session.cookies.set("connected-account-server-hint", address.lower())
+            GQL_QUERY = """query DropEligibilityQuery($collectionSlug: String!, $address: Address!) {
+  dropBySlug(slug: $collectionSlug) {
+    __typename
+    ... on Erc721SeaDropV1 {
+      minterQuantityMinted(minter: $address)
+      __typename
+    }
+    stages {
+      stageType
+      stageIndex
+      isEligible
+      maxTotalMintableByWallet
+      eligibleMaxTotalMintableByWallet
+      eligiblePrice {
+        ...TokenPrice
+        ...UsdPrice
+        usd
+        token {
+          unit
+          symbol
+          contractAddress
+          chain { identifier __typename }
+          __typename
+        }
+        __typename
+      }
+      ... on Erc1155SeaDropV2Stage {
+        fromTokenId
+        toTokenId
+        maxTotalMintableByWalletPerToken
+        eligibleMaxTotalMintableByWalletPerToken
+        __typename
+      }
+      __typename
+    }
+  }
+}
+fragment TokenPrice on Price {
+  usd
+  token {
+    unit
+    symbol
+    contractAddress
+    chain { identifier __typename }
+    __typename
+  }
+  __typename
+}
+fragment UsdPrice on Price {
+  usd
+  token {
+    contractAddress
+    unit
+    ...currencyIdentifier
+    __typename
+  }
+  __typename
+}
+fragment currencyIdentifier on ContractIdentifier {
+  contractAddress
+  chain { identifier __typename }
+  __typename
+}"""
             r_gql = await session.post(
                 "https://gql.opensea.io/graphql",
                 json={
                     "operationName": "DropEligibilityQuery",
-                    "query": (
-                        "query DropEligibilityQuery($collectionSlug: String!, $address: Address!) {\n"
-                        "  dropBySlug(slug: $collectionSlug) {\n"
-                        "    __typename\n"
-                        "    stages {\n"
-                        "      stageType\n      stageIndex\n      isEligible\n"
-                        "      maxTotalMintableByWallet\n"
-                        "      eligibleMaxTotalMintableByWallet\n"
-                        "      eligiblePrice {\n"
-                        "        usd\n"
-                        "        token { unit symbol contractAddress chain { identifier __typename } __typename }\n"
-                        "        __typename\n"
-                        "      }\n"
-                        "      __typename\n"
-                        "    }\n  }\n}"
-                    ),
+                    "query": GQL_QUERY,
                     "variables": {"address": address, "collectionSlug": slug},
                 },
                 headers={"content-type": "application/json"},
