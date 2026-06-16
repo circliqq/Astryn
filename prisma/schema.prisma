@@ -193,6 +193,7 @@ model MintPhase {
   id             String        @id @default(uuid())
   collectionId   String
   phaseType      MintPhaseType
+  name           String?
   priceWei       String
   startTime      DateTime
   endTime        DateTime?

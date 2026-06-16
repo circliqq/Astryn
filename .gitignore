@@ -8,3 +8,12 @@ coverage
 *.log
 .turbo
 .DS_Store
+
+# Private keys / secrets — NEVER commit these
+privkeys.txt
+proxy.txt
+out/
+*.csv
+*.key
+keys.txt
+wallets.txt

@@ -6,7 +6,7 @@
 # ============================================================
 set -e
 
-SERVER_IP="178.104.70.37"
+SERVER_IP="5.161.224.125"
 APP_PORT="80"          # Nginx will listen on this port
 
 echo ""

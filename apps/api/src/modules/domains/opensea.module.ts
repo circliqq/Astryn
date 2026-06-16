@@ -11,14 +11,36 @@ import { ConfigService } from "@nestjs/config";
 import { OpenSeaClient } from "@mint-copilot/opensea";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
+// Proxy-enabled fetch using Node's built-in undici ProxyAgent.
+// Only active when PROXY_URL is set in .env
+function buildProxyFetch(proxyUrl: string): typeof fetch {
+  // undici ships with Node 18+ — no extra install needed.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { ProxyAgent, fetch: undiciFetch } = require("undici") as {
+    ProxyAgent: new (url: string) => object;
+    fetch: typeof fetch;
+  };
+  const dispatcher = new ProxyAgent(proxyUrl);
+  return (input, init) =>
+    undiciFetch(input as Parameters<typeof fetch>[0], {
+      ...(init ?? {}),
+      // @ts-expect-error dispatcher is undici-specific
+      dispatcher,
+    }) as ReturnType<typeof fetch>;
+}
 
 @Injectable()
 class OpenSeaService {
   private readonly client: OpenSeaClient;
+  private readonly proxyFetch: typeof fetch | undefined;
 
   constructor(private readonly config: ConfigService) {
+    const proxyUrl = this.config.get<string>("PROXY_URL");
+    this.proxyFetch = proxyUrl ? buildProxyFetch(proxyUrl) : undefined;
+
     this.client = new OpenSeaClient({
       apiKey: this.config.getOrThrow<string>("OPENSEA_API_KEY"),
+      ...(this.proxyFetch ? { fetchImpl: this.proxyFetch } : {}),
     });
   }
 
@@ -28,6 +50,11 @@ class OpenSeaService {
 
   getApiKey(): string {
     return this.config.getOrThrow<string>("OPENSEA_API_KEY");
+  }
+
+  /** Returns proxy-aware fetch (falls back to global fetch if no proxy configured). */
+  getFetch(): typeof fetch {
+    return this.proxyFetch ?? fetch;
   }
 }
 
@@ -86,9 +113,10 @@ class OpenSeaController {
     const apiKey = this.openSeaService.getApiKey();
 
     const url = `https://api.opensea.io/api/v2/orders/${chainParam}/seaport/listings?asset_contract_address=${contractAddress}&limit=${limitParam}&order_by=eth_price&order_direction=asc`;
+    const proxyFetch = this.openSeaService.getFetch();
 
     try {
-      const res = await fetch(url, {
+      const res = await proxyFetch(url, {
         headers: { "x-api-key": apiKey, accept: "application/json" },
       });
       if (!res.ok) return { listings: [], error: `OpenSea responded with ${res.status}` };

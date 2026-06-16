@@ -535,3 +535,195 @@ export async function waitForReceipt(
     timeout: receiptOptions.timeoutMs ?? 120_000
   });
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Contract Analyzer — detect type + suggest gas limit (no Etherscan key needed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ContractType = "SeaDrop" | "ERC721A" | "ERC721" | "ERC1155" | "Unknown";
+
+export interface ContractAnalysis {
+  contractType: ContractType;
+  name: string;
+  totalSupply: string;
+  detectedFunctions: string[];
+  gasLimit: {
+    recommended: number;
+    safe: number;
+  };
+}
+
+// Function selectors → contract type mapping
+const CONTRACT_SELECTORS: Record<string, { fn: string; type: ContractType }> = {
+  "0x840e15d4": { fn: "getMintStats(address)",  type: "SeaDrop"  }, // SeaDrop-specific
+  "0x6489fcad": { fn: "mintSeaDrop(...)",        type: "SeaDrop"  }, // SeaDrop-specific
+  "0x2db11544": { fn: "mintERC2309(...)",         type: "ERC721A"  }, // ERC721A-specific
+  "0xa0712d68": { fn: "mint(uint256)",            type: "ERC721"   },
+  "0x1249c58b": { fn: "mint()",                  type: "ERC721"   },
+  "0xd9b67a26": { fn: "ERC1155 interface check", type: "ERC1155"  },
+};
+
+// Safe gas limits per contract type
+const GAS_LIMIT_MAP: Record<ContractType, { recommended: number; safe: number }> = {
+  SeaDrop:  { recommended: 280_000, safe: 350_000 },
+  ERC721A:  { recommended: 130_000, safe: 180_000 },
+  ERC721:   { recommended: 180_000, safe: 230_000 },
+  ERC1155:  { recommended: 100_000, safe: 150_000 },
+  Unknown:  { recommended: 200_000, safe: 280_000 },
+};
+
+const NAME_ABI = [
+  { type: "function", name: "name",        stateMutability: "view", inputs: [], outputs: [{ type: "string" }] },
+  { type: "function", name: "totalSupply", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+] as const;
+
+/**
+ * Analyzes an NFT contract by probing function selectors via RPC.
+ * No Etherscan API key required — uses existing ETH_RPC_PRIMARY from env.
+ *
+ * Returns detected contract type and recommended gas limits for minting.
+ *
+ * @example
+ * const analysis = await analyzeContract(rpcOptions, "0x9dc39b51...");
+ * console.log(analysis.contractType);   // "SeaDrop"
+ * console.log(analysis.gasLimit.safe);  // 350000
+ */
+export async function analyzeContract(
+  options: BlockchainClientOptions,
+  contractAddress: string
+): Promise<ContractAnalysis> {
+  const client  = createMintPublicClient(options);
+  const address = getAddress(contractAddress);
+
+  let contractType: ContractType = "Unknown";
+  const detectedFunctions: string[] = [];
+
+  // Probe each selector — revert = function exists, call failed = not present
+  for (const [selector, meta] of Object.entries(CONTRACT_SELECTORS)) {
+    try {
+      await client.call({ to: address, data: selector as `0x${string}` });
+      detectedFunctions.push(meta.fn);
+      contractType = meta.type;
+    } catch (err: unknown) {
+      const msg = (err as Error).message ?? "";
+      // "execution reverted" means function IS present but rejected wrong args
+      if (msg.includes("execution reverted") || msg.includes("revert")) {
+        detectedFunctions.push(meta.fn);
+        contractType = meta.type;
+      }
+      // Any other error (e.g. "function selector not found") = not present
+    }
+  }
+
+  // SeaDrop takes priority if detected (most specific type)
+  if (detectedFunctions.some(f => f.includes("getMintStats") || f.includes("mintSeaDrop"))) {
+    contractType = "SeaDrop";
+  }
+
+  // Fetch human-readable info
+  let name         = "Unknown";
+  let totalSupply  = "Unknown";
+
+  try {
+    const contract = { address, abi: NAME_ABI };
+    name        = await client.readContract({ ...contract, functionName: "name" }) as string;
+    totalSupply = String(await client.readContract({ ...contract, functionName: "totalSupply" }));
+  } catch {
+    // Non-critical — continue without metadata
+  }
+
+  return {
+    contractType,
+    name,
+    totalSupply,
+    detectedFunctions,
+    gasLimit: GAS_LIMIT_MAP[contractType],
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ABI Fetcher — no Etherscan API key needed
+// Sources: Sourcify → Etherscan public (rate-limited) → selector fallback
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface AbiResult {
+  abi:    unknown[];
+  source: "sourcify" | "etherscan-key" | "etherscan-public" | "selector-fallback";
+  verified: boolean;
+}
+
+/**
+ * Fetch contract ABI — tries sources in priority order:
+ *   1. Sourcify          (free, no key)
+ *   2. Etherscan + key   (fast, reliable — uses ETHERSCAN_API_KEY from env)
+ *   3. Etherscan public  (no key, rate-limited fallback)
+ *   4. Selector fallback (offline, known signatures)
+ */
+export async function fetchContractAbi(
+  contractAddress: string,
+  chainId: number = 1   // 1 = Ethereum mainnet, 8453 = Base
+): Promise<AbiResult> {
+  const address    = getAddress(contractAddress);
+  const etherscanKey = process.env["ETHERSCAN_API_KEY"] ?? "";
+
+  // ── 1. Sourcify ───────────────────────────────────────────────────────────
+  try {
+    const url = `https://sourcify.dev/server/v1/files/any/${chainId}/${address}`;
+    const res  = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+    if (res.ok) {
+      const data  = await res.json() as { files?: { name: string; content: string }[] };
+      const entry = data.files?.find(f => f.name.endsWith(".json") && !f.name.includes("metadata"));
+      if (entry) {
+        const parsed = JSON.parse(entry.content) as { abi?: unknown[] };
+        if (Array.isArray(parsed.abi) && parsed.abi.length > 0) {
+          return { abi: parsed.abi, source: "sourcify", verified: true };
+        }
+      }
+    }
+  } catch { /* try next source */ }
+
+  // ── 2. Etherscan with API key (fast, no rate limit) ───────────────────────
+  if (etherscanKey && etherscanKey !== "replace_me") {
+    try {
+      const url = `https://api.etherscan.io/api?module=contract&action=getabi&address=${address}&apikey=${etherscanKey}`;
+      const res  = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+      if (res.ok) {
+        const data = await res.json() as { status: string; result: string };
+        if (data.status === "1") {
+          const abi = JSON.parse(data.result) as unknown[];
+          return { abi, source: "etherscan-key", verified: true };
+        }
+      }
+    } catch { /* try next source */ }
+  }
+
+  // ── 3. Etherscan public (no key, rate-limited to ~1 req/5s) ──────────────
+  try {
+    const url  = `https://api.etherscan.io/api?module=contract&action=getabi&address=${address}`;
+    const res  = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+    if (res.ok) {
+      const data = await res.json() as { status: string; result: string };
+      if (data.status === "1") {
+        const abi = JSON.parse(data.result) as unknown[];
+        return { abi, source: "etherscan-public", verified: true };
+      }
+    }
+  } catch { /* try next source */ }
+
+  // ── 3. Selector fallback — minimal ABI from known signatures ─────────────
+  // Covers SeaDrop + common ERC721 functions without any external API
+  const fallbackAbi = [
+    { type: "function", name: "name",         stateMutability: "view",    inputs: [],                                         outputs: [{ type: "string"  }] },
+    { type: "function", name: "symbol",       stateMutability: "view",    inputs: [],                                         outputs: [{ type: "string"  }] },
+    { type: "function", name: "totalSupply",  stateMutability: "view",    inputs: [],                                         outputs: [{ type: "uint256" }] },
+    { type: "function", name: "maxSupply",    stateMutability: "view",    inputs: [],                                         outputs: [{ type: "uint256" }] },
+    { type: "function", name: "ownerOf",      stateMutability: "view",    inputs: [{ name: "tokenId", type: "uint256" }],     outputs: [{ type: "address" }] },
+    { type: "function", name: "balanceOf",    stateMutability: "view",    inputs: [{ name: "owner",   type: "address" }],     outputs: [{ type: "uint256" }] },
+    { type: "function", name: "tokenURI",     stateMutability: "view",    inputs: [{ name: "tokenId", type: "uint256" }],     outputs: [{ type: "string"  }] },
+    { type: "function", name: "getMintStats", stateMutability: "view",    inputs: [{ name: "minter",  type: "address" }],     outputs: [{ type: "uint256" }, { type: "uint256" }, { type: "uint256" }] },
+    { type: "function", name: "mint",         stateMutability: "payable", inputs: [{ name: "quantity", type: "uint256" }],    outputs: [] },
+    { type: "function", name: "mintSeaDrop",  stateMutability: "nonpayable", inputs: [{ name: "minter", type: "address" }, { name: "quantity", type: "uint256" }], outputs: [] },
+  ];
+
+  return { abi: fallbackAbi, source: "selector-fallback", verified: false };
+}

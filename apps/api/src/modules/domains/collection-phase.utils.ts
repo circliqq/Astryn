@@ -91,6 +91,7 @@ export async function getCollectionWithPhaseData(
                 : apiStartTime;
             return {
               phaseType,
+              name: phase.name ?? null,
               priceWei: ethToWei(phase.priceEth),
               startTime,
               endTime: phase.endTime ? new Date(phase.endTime) : undefined,

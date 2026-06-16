@@ -400,6 +400,21 @@ export async function executeMintTask(
             task.phaseType,
             async (message, contextJson) =>
               log(prisma, task.id, "warn", message, contextJson),
+            // SIWE signer for OpenSea's authenticated DropEligibilityQuery (reliable
+            // for SeaDrop GTD / allowlist drops). Falls back to REST if it fails.
+            async (message: string) => {
+              const privateKey = await decryptPrivateKey(
+                {
+                  encryptedPrivateKey: wallet.encryptedPrivateKey,
+                  encryptionSalt: wallet.encryptionSalt,
+                  encryptionIv: wallet.encryptionIv,
+                  encryptionAuthTag: wallet.encryptionAuthTag,
+                  encryptionVersion: wallet.encryptionVersion,
+                },
+                { masterKey: env("ENCRYPTION_MASTER_KEY") },
+              );
+              return privateKeyToAccount(privateKey).signMessage({ message });
+            },
           );
           const payload = await loadMintPayload(
             openSea,
@@ -1255,12 +1270,13 @@ async function resolveEligibility(
   walletAddress: string,
   phaseType: string,
   warn: (message: string, contextJson?: unknown) => Promise<void>,
+  signMessage?: (message: string) => Promise<string>,
 ): Promise<EligibilityResult> {
   const openSeaPhase = toOpenSeaPhase(phaseType);
   if (openSeaPhase === "public") return { eligible: true, phaseType: "public" };
 
   try {
-    return await openSea.checkEligibility(slug, walletAddress, openSeaPhase);
+    return await openSea.checkEligibility(slug, walletAddress, openSeaPhase, { signMessage });
   } catch (error) {
     await warn(
       `Eligibility check for ${shortAddress(walletAddress)} is unavailable; continuing with mint payload resolution.`,
@@ -1715,16 +1731,24 @@ async function waitWithRollingSimulation(
           } catch (error) {
             const rawErr = rawErrorMessage(error);
             const forceBroadcast = process.env.MINT_FORCE_BROADCAST_ON_SIM_FAILURE === "true";
-            if (forceBroadcast) {
+            // If simulation never passed pre-open (wallet was on fallback gas), the
+            // failure at T=0 is almost certainly RPC lag — the tx is valid, the node
+            // just hasn't seen the new block yet.  Broadcast immediately instead of
+            // entering the grace period, which would be too late for a competitive mint.
+            const wasOnFallbackGas = p.simulationFailed;
+            if (forceBroadcast || wasOnFallbackGas) {
+              const reason = forceBroadcast
+                ? "MINT_FORCE_BROADCAST_ON_SIM_FAILURE is enabled"
+                : "wallet was on fallback gas pre-open (RPC timing issue)";
               console.warn(
-                `[GasWar] ⚠ Simulation failed for ${p.walletAddress} — force-broadcasting anyway.\n` +
+                `[GasWar] ⚠ Simulation failed for ${p.walletAddress} — force-broadcasting anyway (${reason}).\n` +
                 `  Raw error: ${rawErr}`,
               );
               await log(
                 prisma,
                 mintTaskId,
                 "warn",
-                `Simulation still failing for wallet ${shortAddress(p.walletAddress)} at phase open — MINT_FORCE_BROADCAST_ON_SIM_FAILURE is enabled, broadcasting anyway. TX may revert.`,
+                `Simulation still failing for wallet ${shortAddress(p.walletAddress)} at phase open — broadcasting anyway (${reason}). TX may revert.`,
                 { walletId: p.walletId, rawError: rawErr },
               );
             } else {

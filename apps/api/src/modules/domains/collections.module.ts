@@ -4,9 +4,117 @@ import { MintPhaseType } from "@prisma/client";
 import { IsArray, IsIn, IsOptional, IsString } from "class-validator";
 import { OpenSeaClient, type DropPhase } from "@mint-copilot/opensea";
 import { getAllowListInfo } from "@mint-copilot/blockchain";
+import { decryptPrivateKey } from "@mint-copilot/wallet-crypto";
+import { privateKeyToAccount } from "viem/accounts";
+import { spawn } from "child_process";
+import * as path from "path";
+import * as fs from "fs";
+import { fileURLToPath } from "url";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
 import { PrismaService } from "../prisma/prisma.service.js";
+
+// ── Python eligibility worker (Cloudflare bypass) ────────────────────────────
+// Node.js fetch is blocked by Cloudflare (TLS fingerprint mismatch).
+// Python's curl_cffi spoofs Chrome TLS and passes where Node.js cannot.
+
+function findPythonWorker(): string | null {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+  const candidates = [
+    process.env.ELIGIBILITY_WORKER_PATH,
+    path.resolve(__dirname, "../../../../../tools/eligibility_worker.py"),
+    path.resolve(process.cwd(), "tools/eligibility_worker.py"),
+    path.resolve(process.cwd(), "../../tools/eligibility_worker.py"),
+  ].filter(Boolean) as string[];
+  for (const p of candidates) {
+    try { if (fs.existsSync(p)) return p; } catch { /* skip */ }
+  }
+  return null;
+}
+
+type PyWalletResult = { address: string; eligible: boolean; stages: string[]; error: string | null };
+
+/** Call the Python worker in bulk mode — one subprocess for all wallets. */
+function checkEligibilityViaPythonBulk(
+  slug: string,
+  wallets: Array<{ address: string; privkey: string }>,
+  workerPath: string,
+  timeoutMs = 120_000,
+): Promise<PyWalletResult[]> {
+  return new Promise((resolve) => {
+    const pythonCmd = process.env.PYTHON_CMD ?? "python3";
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = spawn(pythonCmd, [workerPath], { stdio: ["pipe", "pipe", "pipe"] });
+    } catch {
+      resolve(wallets.map((w) => ({ address: w.address, eligible: false, stages: [], error: "Failed to spawn Python" })));
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+    const timer = setTimeout(() => {
+      proc.kill();
+      resolve(wallets.map((w) => ({ address: w.address, eligible: false, stages: [], error: "Python worker timed out" })));
+    }, timeoutMs);
+    proc.on("close", () => {
+      clearTimeout(timer);
+      try {
+        const parsed = JSON.parse(stdout.trim());
+        resolve(parsed.results ?? []);
+      } catch {
+        const err = stderr.slice(0, 300) || "Python worker bad output";
+        resolve(wallets.map((w) => ({ address: w.address, eligible: false, stages: [], error: err })));
+      }
+    });
+    // Proxies from env (comma-separated list) or empty
+    const proxies = process.env.ELIGIBILITY_PROXIES
+      ? process.env.ELIGIBILITY_PROXIES.split(",").map((p) => p.trim()).filter(Boolean)
+      : [];
+    proc.stdin?.write(JSON.stringify({ slug, wallets, threads: 3, delay: 1.5, proxies }));
+    proc.stdin?.end();
+  });
+}
+
+/** Legacy single-wallet call — kept for fallback compatibility. */
+function checkEligibilityViaPython(
+  slug: string,
+  privkey: string,
+  workerPath: string
+): Promise<{ eligible: boolean; stages: string[]; error: string | null }> {
+  return new Promise((resolve) => {
+    const pythonCmd = process.env.PYTHON_CMD ?? "python3";
+    let proc: ReturnType<typeof spawn>;
+    try {
+      proc = spawn(pythonCmd, [workerPath], { stdio: ["pipe", "pipe", "pipe"] });
+    } catch {
+      resolve({ eligible: false, stages: [], error: "Failed to spawn Python" });
+      return;
+    }
+    let stdout = "";
+    let stderr = "";
+    proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+    proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+    const timer = setTimeout(() => {
+      proc.kill();
+      resolve({ eligible: false, stages: [], error: "Python worker timed out" });
+    }, 30_000);
+    proc.on("close", () => {
+      clearTimeout(timer);
+      try {
+        resolve(JSON.parse(stdout.trim()));
+      } catch {
+        resolve({ eligible: false, stages: [], error: stderr.slice(0, 300) || "Python worker bad output" });
+      }
+    });
+    proc.stdin?.write(JSON.stringify({ slug, privkey }));
+    proc.stdin?.end();
+  });
+}
+
+const PYTHON_WORKER_PATH = findPythonWorker();
 import {
   collectionInclude,
   ethToWei,
@@ -64,6 +172,7 @@ class CollectionsController {
           phases: {
             create: drop.phases.map((phase: DropPhase) => ({
               phaseType: phaseTypeToPrisma(phase.type),
+              name: phase.name ?? null,
               priceWei: ethToWei(phase.priceEth),
               startTime: new Date(phase.startTime),
               endTime: phase.endTime ? new Date(phase.endTime) : undefined,
@@ -81,6 +190,7 @@ class CollectionsController {
             deleteMany: {},
             create: drop.phases.map((phase: DropPhase) => ({
               phaseType: phaseTypeToPrisma(phase.type),
+              name: phase.name ?? null,
               priceWei: ethToWei(phase.priceEth),
               startTime: new Date(phase.startTime),
               endTime: phase.endTime ? new Date(phase.endTime) : undefined,
@@ -131,17 +241,140 @@ class CollectionsController {
   ) {
     const phaseData = await getCollectionWithPhaseData(this.prisma, this.config, id);
     const { collection } = phaseData;
-    const wallets = await this.prisma.wallet.findMany({
+    const walletRecords = await this.prisma.wallet.findMany({
       where: { id: { in: body.walletIds }, userId: user.id },
-      select: { id: true, name: true, address: true }
+      select: {
+        id: true,
+        name: true,
+        address: true,
+        encryptedPrivateKey: true,
+        encryptionSalt: true,
+        encryptionIv: true,
+        encryptionAuthTag: true,
+        encryptionVersion: true
+      }
     });
+
+    // Decrypt all private keys upfront — used for both the Node.js SIWE signer
+    // and the Python worker fallback (which needs the raw key via stdin).
+    const masterKey = this.config.getOrThrow<string>("ENCRYPTION_MASTER_KEY");
+    const signerByWalletId = new Map<string, (message: string) => Promise<string>>();
+    const privkeyByWalletId = new Map<string, string>();
+    for (const record of walletRecords) {
+      try {
+        const privateKey = await decryptPrivateKey(
+          {
+            encryptedPrivateKey: record.encryptedPrivateKey,
+            encryptionSalt: record.encryptionSalt,
+            encryptionIv: record.encryptionIv,
+            encryptionAuthTag: record.encryptionAuthTag,
+            encryptionVersion: record.encryptionVersion
+          },
+          { masterKey }
+        ) as string;
+        privkeyByWalletId.set(record.id, privateKey);
+        signerByWalletId.set(record.id, async (message: string) =>
+          privateKeyToAccount(privateKey as `0x${string}`).signMessage({ message })
+        );
+      } catch (err) {
+        console.warn(`[eligibility] Could not decrypt key for wallet ${record.id}:`, err);
+        // Skip this wallet — it will show as unverifiable
+      }
+    }
+    const wallets = walletRecords.map((record) => ({ id: record.id, name: record.name, address: record.address }));
 
     const client = new OpenSeaClient({ apiKey: this.config.getOrThrow<string>("OPENSEA_API_KEY") });
     const phaseWindows = resolvePhaseWindows(collection.phases);
 
-    // Run all wallet × phase eligibility checks in parallel to avoid sequential
-    // OpenSea API calls that cause 504 Gateway Timeout under nginx's 60 s limit.
-    async function checkPhaseForWallet(wallet: { id: string; name: string; address: string }, window: ReturnType<typeof resolvePhaseWindows>[number]) {
+    // ── Bulk Python eligibility check (primary) ──────────────────────────────
+    // Run once for all wallets upfront. Python uses curl_cffi (Chrome TLS spoof)
+    // which passes Cloudflare where Node.js fetch cannot.
+    // Results stored by address, used in checkPhaseForWallet below.
+    const pyBulkResultByAddress = new Map<string, PyWalletResult>();
+    if (PYTHON_WORKER_PATH) {
+      try {
+        const walletsForPython = wallets
+          .map((w) => {
+            const privkey = privkeyByWalletId.get(w.id);
+            return privkey ? { address: w.address, privkey } : null;
+          })
+          .filter((w): w is { address: string; privkey: string } => w !== null);
+
+        if (walletsForPython.length > 0) {
+          const pyResults = await checkEligibilityViaPythonBulk(
+            collection.slug,
+            walletsForPython,
+            PYTHON_WORKER_PATH,
+            // Allow up to (wallets × 45 s) but cap at 110 s to stay under nginx timeout
+            Math.min(walletsForPython.length * 45_000, 110_000)
+          );
+          for (const r of pyResults) {
+            pyBulkResultByAddress.set(r.address.toLowerCase(), r);
+          }
+        }
+      } catch (err) {
+        console.warn("[eligibility] Bulk Python check threw:", err);
+      }
+    }
+
+    // ── Allowlist fallback: fetch contract/OpenSea allowlist once, shared across all wallet checks ──
+    // This is used when OpenSea API returns 404 for per-wallet eligibility (e.g. GTD phases).
+    let allowlistAddressSet: Set<string> | null = null;
+    let allowlistFetched = false;
+    const getAllowlistAddressSet = async (): Promise<Set<string> | null> => {
+      if (allowlistFetched) return allowlistAddressSet;
+      allowlistFetched = true;
+      if (!collection.contractAddress) return null;
+      const network = collection.chain === "BASE" ? "base" : "ethereum";
+      const rpcUrl = this.config.get<string>(network === "base" ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY");
+      // Try contract source first
+      if (rpcUrl) {
+        try {
+          const contractResult = await getAllowListInfo(
+            { chainName: network, rpcUrl },
+            collection.contractAddress as `0x${string}`
+          );
+          if (contractResult.addresses.length > 0) {
+            allowlistAddressSet = new Set(contractResult.addresses.map((a) => a.toLowerCase()));
+            return allowlistAddressSet;
+          }
+        } catch { /* fall through to OpenSea allowlist */ }
+      }
+      // Try OpenSea allowlist endpoint
+      try {
+        const endpoints = [
+          `/drops/${collection.slug}/allowlist?limit=10000`,
+          `/drops/${collection.slug}/allowlist`,
+          `/chain/${network}/contract/${collection.contractAddress}/drops/allowlist?limit=10000`,
+        ];
+        const extractAddresses = (data: Record<string, unknown>): string[] => {
+          const candidates = [
+            data["addresses"], data["wallets"], data["allowlist"], data["entries"],
+            (data["result"] as Record<string, unknown>)?.["addresses"],
+          ];
+          for (const c of candidates) {
+            if (Array.isArray(c) && c.length > 0 && typeof c[0] === "string") {
+              return (c as string[]).filter((a) => /^0x[a-fA-F0-9]{40}$/.test(a));
+            }
+          }
+          return [];
+        };
+        for (const ep of endpoints) {
+          try {
+            const data = await (client as unknown as { request: <T>(path: string) => Promise<T> }).request<Record<string, unknown>>(ep);
+            const addrs = extractAddresses(data);
+            if (addrs.length > 0) {
+              allowlistAddressSet = new Set(addrs.map((a) => a.toLowerCase()));
+              return allowlistAddressSet;
+            }
+          } catch { /* try next */ }
+        }
+      } catch { /* OpenSea allowlist unavailable */ }
+      return null;
+    };
+
+    // Run all wallet × phase eligibility checks in parallel.
+    const checkPhaseForWallet = async (wallet: { id: string; name: string; address: string }, window: ReturnType<typeof resolvePhaseWindows>[number]) => {
       if (window.phaseType === "PUBLIC") {
         return {
           phaseType: window.phaseType,
@@ -159,12 +392,32 @@ class CollectionsController {
         };
       }
 
+      // ── Use bulk Python result (primary) if available ───────────────────────
+      const pyResult = pyBulkResultByAddress.get(wallet.address.toLowerCase());
+      if (pyResult && !pyResult.error) {
+        return {
+          phaseType: window.phaseType,
+          startTime: window.startTime,
+          endTime: window.endTime,
+          phaseStatus: window.phaseStatus,
+          eligible: window.phaseStatus !== "ENDED" && pyResult.eligible,
+          checked: true,
+          reason: pyResult.eligible
+            ? `Eligible (${pyResult.stages.join(", ")})`
+            : "Not eligible for any whitelist stage."
+        };
+      }
+
       try {
         const result = await client.checkEligibility(
           collection.slug,
           wallet.address,
           toOpenSeaPhase(window.phaseType),
-          { chain: collection.chain.toLowerCase(), contractAddress: collection.contractAddress ?? undefined }
+          {
+            chain: collection.chain.toLowerCase(),
+            contractAddress: collection.contractAddress ?? undefined,
+            signMessage: signerByWalletId.get(wallet.id)
+          }
         );
         return {
           phaseType: window.phaseType,
@@ -184,13 +437,66 @@ class CollectionsController {
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         const is404 = msg.includes("404");
+
+        // ── Allowlist fallback: on-chain / OpenSea allowlist ────────────────
+        if (is404 && collection.contractAddress) {
+          try {
+            const addressSet = await getAllowlistAddressSet();
+            if (addressSet !== null) {
+              const eligible = addressSet.has(wallet.address.toLowerCase());
+              return {
+                phaseType: window.phaseType,
+                startTime: window.startTime,
+                endTime: window.endTime,
+                phaseStatus: window.phaseStatus,
+                eligible: window.phaseStatus !== "ENDED" && eligible,
+                checked: true,
+                reason: eligible
+                  ? "Wallet found in allowlist (verified via contract/OpenSea allowlist)."
+                  : "Wallet not found in allowlist."
+              };
+            }
+          } catch { /* fall through to Python worker */ }
+        }
+
+        // ── Python worker fallback: curl_cffi Chrome TLS spoofing ───────────
+        // Used when Node.js SIWE is blocked by Cloudflare and on-chain
+        // allowlist is unavailable. Python passes Cloudflare where Node.js can't.
+        if (PYTHON_WORKER_PATH) {
+          try {
+            const privkey = privkeyByWalletId.get(wallet.id);
+            if (privkey) {
+              const pyResult = await checkEligibilityViaPython(
+                collection.slug,
+                privkey,
+                PYTHON_WORKER_PATH
+              );
+              if (!pyResult.error) {
+                return {
+                  phaseType: window.phaseType,
+                  startTime: window.startTime,
+                  endTime: window.endTime,
+                  phaseStatus: window.phaseStatus,
+                  eligible: window.phaseStatus !== "ENDED" && pyResult.eligible,
+                  checked: true,
+                  reason: pyResult.eligible
+                    ? `Eligible (${pyResult.stages.join(", ")})`
+                    : "Not eligible for any whitelist stage."
+                };
+              }
+              // Python ran but returned an error — log it and fall through
+              console.warn(`[eligibility] Python worker error for ${wallet.address}: ${pyResult.error}`);
+            }
+          } catch (pyErr) {
+            console.warn(`[eligibility] Python worker threw for ${wallet.address}:`, pyErr);
+          }
+        }
+
         return {
           phaseType: window.phaseType,
           startTime: window.startTime,
           endTime: window.endTime,
           phaseStatus: window.phaseStatus,
-          // Never assume eligible when we cannot verify — 404 means the API
-          // endpoint doesn't exist, not that the wallet is whitelisted.
           eligible: false,
           checked: false,
           reason: is404
@@ -200,11 +506,10 @@ class CollectionsController {
       }
     }
 
-    // Fire all (wallet × phase) checks concurrently — all results are settled
-    // even if individual OpenSea calls fail, so one bad call won't abort others.
-    // A 45 s overall deadline prevents the endpoint from ever hitting nginx's
-    // 60 s gateway timeout: any check still pending becomes "unverifiable".
-    const OVERALL_TIMEOUT_MS = 45_000;
+    // Fire all (wallet × phase) checks concurrently. Bulk Python already ran
+    // upfront so most wallets will resolve instantly from pyBulkResultByAddress.
+    // Keep a short deadline for the remaining OpenSea API fallback calls.
+    const OVERALL_TIMEOUT_MS = 15_000;
     const deadlineResult = Symbol("deadline");
     const deadline = new Promise<typeof deadlineResult>((resolve) =>
       setTimeout(() => resolve(deadlineResult), OVERALL_TIMEOUT_MS)
@@ -438,6 +743,7 @@ class CollectionsByContractController {
           phases: {
             create: drop.phases.map((phase: DropPhase) => ({
               phaseType: phaseTypeToPrisma(phase.type),
+              name: phase.name ?? null,
               priceWei: ethToWei(phase.priceEth),
               startTime: new Date(phase.startTime),
               endTime: phase.endTime ? new Date(phase.endTime) : undefined,
@@ -455,6 +761,7 @@ class CollectionsByContractController {
             deleteMany: {},
             create: drop.phases.map((phase: DropPhase) => ({
               phaseType: phaseTypeToPrisma(phase.type),
+              name: phase.name ?? null,
               priceWei: ethToWei(phase.priceEth),
               startTime: new Date(phase.startTime),
               endTime: phase.endTime ? new Date(phase.endTime) : undefined,

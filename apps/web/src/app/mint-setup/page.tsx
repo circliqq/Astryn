@@ -9,7 +9,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
-  ClipboardList,
   ExternalLink,
   Flame,
   Repeat2,
@@ -60,7 +59,9 @@ interface Wallet {
 }
 
 interface CollectionPhase {
+  id: string;
   phaseType: "PUBLIC" | "ALLOWLIST" | "GTD" | "FCFS";
+  name: string | null;
   priceWei: string;
   startTime: string;
   endTime: string | null;
@@ -95,16 +96,6 @@ function weiToEth(wei: string): number {
   }
 }
 
-function phaseEligibility(phaseType: CollectionPhase["phaseType"]): {
-  label: string;
-  tone: "green" | "yellow" | "slate";
-  isVerified: boolean;
-} {
-  if (phaseType === "PUBLIC") return { label: "Eligible", tone: "green", isVerified: true };
-  if (phaseType === "FCFS") return { label: "FCFS – Verify WL", tone: "yellow", isVerified: false };
-  if (phaseType === "GTD") return { label: "GTD – Verify WL", tone: "yellow", isVerified: false };
-  return { label: "WL Required", tone: "yellow", isVerified: false };
-}
 
 export default function MintSetupPage() {
   return (
@@ -128,7 +119,10 @@ function MintSetupContent() {
   const searchParams = useSearchParams();
   const collectionId = searchParams.get("collectionId") ?? "";
 
-  const [phaseType, setPhaseType] = useState<CollectionPhase["phaseType"]>("PUBLIC");
+  // Selection is keyed by the unique phase id (not phaseType) so that two distinct
+  // phases sharing an enum type — e.g. a free "Team Mint" and a paid "Whitelist Mint",
+  // both ALLOWLIST — stay independently selectable instead of collapsing into one.
+  const [selectedPhaseId, setSelectedPhaseId] = useState<string | null>(null);
   const [selectedWalletIds, setSelectedWalletIds] = useState<string[]>([]);
   const [gasModeExtended, setGasModeExtended] = useState<ExtendedGasMode>(() => loadSavedGasSettings().mode);
   const [advancedGas, setAdvancedGas] = useState<
@@ -161,15 +155,12 @@ function MintSetupContent() {
   const [scheduleMode, setScheduleMode] = useState<"draft" | "phase_start" | "custom">("draft");
   const [scheduleAt, setScheduleAt] = useState("");
   const [message, setMessage] = useState<string | null>(null);
+  const [dragWalletId, setDragWalletId] = useState<string | null>(null);
 
-  // ── Per-wallet eligibility ────────────────────────────────────────────────
-  // null = checking, true = eligible, false = not eligible, "unverifiable" = API can't check
-  const [walletEligibilityMap, setWalletEligibilityMap] = useState<Map<string, boolean | "unverifiable" | null>>(new Map());
-  const [isCheckingEligibility, setIsCheckingEligibility] = useState(false);
-  // Manual overrides: wallets the user has confirmed eligible on OpenSea
-  const [manualEligibleMap, setManualEligibleMap] = useState<Set<string>>(new Set());
-  // Global eligibility confirmation for unverifiable collections
-  const [eligibilityConfirmed, setEligibilityConfirmed] = useState(false);
+  // ── Phase name overrides (user can manually type real names) ─────────────
+  const [phaseNameOverrides, setPhaseNameOverrides] = useState<Record<string, string>>({});
+  const [editingPhaseName, setEditingPhaseName] = useState<string | null>(null);
+
 
   // ── Instant Flipper state ─────────────────────────────────────────────────
   const [flipperEnabled, setFlipperEnabled]         = useState(false);
@@ -217,17 +208,30 @@ function MintSetupContent() {
   }, [collection, wallets]);
 
   const selectedPhase = useMemo(() => {
-    if (!collection) return null;
-    const direct = collection.phases.find((p) => p.phaseType === phaseType);
-    if (direct) return direct;
-    const allowlistFamily = [...collection.phases]
-      .filter((p) => p.phaseType === "ALLOWLIST" || p.phaseType === "GTD" || p.phaseType === "FCFS")
-      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
-    if (phaseType === "GTD")       return allowlistFamily[0] ?? null;
-    if (phaseType === "FCFS")      return allowlistFamily[1] ?? allowlistFamily[0] ?? null;
-    if (phaseType === "ALLOWLIST") return allowlistFamily[allowlistFamily.length - 1] ?? allowlistFamily[0] ?? null;
-    return collection.phases[0] ?? null;
-  }, [collection, phaseType]);
+    if (!collection || collection.phases.length === 0) return null;
+    return (
+      collection.phases.find((p) => p.id === selectedPhaseId) ??
+      // Default to the public phase if present, else the first phase.
+      collection.phases.find((p) => p.phaseType === "PUBLIC") ??
+      collection.phases[0] ??
+      null
+    );
+  }, [collection, selectedPhaseId]);
+
+  // Enum type derived from the currently selected phase — used by eligibility
+  // checks and task scheduling, which still operate on the 4-value enum.
+  const phaseType: CollectionPhase["phaseType"] = selectedPhase?.phaseType ?? "PUBLIC";
+
+  // Initialise / repair the selection whenever the collection (and its phases) load.
+  useEffect(() => {
+    if (!collection || collection.phases.length === 0) return;
+    const stillValid = collection.phases.some((p) => p.id === selectedPhaseId);
+    if (!stillValid) {
+      const fallback =
+        collection.phases.find((p) => p.phaseType === "PUBLIC") ?? collection.phases[0];
+      setSelectedPhaseId(fallback?.id ?? null);
+    }
+  }, [collection, selectedPhaseId]);
 
   // ── Gas simulation — fires when collection + at least one wallet is ready ────
   // Uses the first selected wallet (or first compatible wallet) to call
@@ -273,10 +277,7 @@ function MintSetupContent() {
 
   // ── Derived values ────────────────────────────────────────────────────────────
 
-  const eligibility = phaseEligibility(selectedPhase?.phaseType ?? "PUBLIC");
 
-  // Reset confirmation when phase changes
-  useEffect(() => { setEligibilityConfirmed(false); }, [collectionId, phaseType]);
 
   // Sync priority wallet order: add newly selected wallets to end, remove deselected ones
   useEffect(() => {
@@ -287,39 +288,6 @@ function MintSetupContent() {
     });
   }, [selectedWalletIds]);
 
-  // ── Auto per-wallet eligibility check when phase/collection changes ───────
-  useEffect(() => {
-    if (!collection || !collectionId || compatibleWallets.length === 0) return;
-    if (phaseType === "PUBLIC") {
-      setWalletEligibilityMap(new Map(compatibleWallets.map((w) => [w.id, true])));
-      return;
-    }
-    setIsCheckingEligibility(true);
-    setWalletEligibilityMap(new Map(compatibleWallets.map((w) => [w.id, null])));
-    apiFetch<{ wallets: Array<{ walletId: string; eligiblePhaseTypes: string[]; unverifiablePhaseTypes?: string[] }> }>(
-      `/collections/${collectionId}/eligibility-matrix`,
-      { method: "POST", body: JSON.stringify({ walletIds: compatibleWallets.map((w) => w.id) }) }
-    )
-      .then((data) => {
-        const map = new Map<string, boolean | "unverifiable">();
-        for (const w of data.wallets) {
-          if (w.eligiblePhaseTypes.includes(phaseType)) {
-            map.set(w.walletId, true);
-          } else if (w.unverifiablePhaseTypes?.includes(phaseType)) {
-            // OpenSea returned 404 — can't confirm either way
-            map.set(w.walletId, "unverifiable");
-          } else {
-            map.set(w.walletId, false);
-          }
-        }
-        setWalletEligibilityMap(map);
-      })
-      .catch(() => {
-        // On error keep map as-is (null = unknown)
-      })
-      .finally(() => setIsCheckingEligibility(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [collection, collectionId, phaseType]);
 
   // Effective gas mode for calculations (advanced → balanced multipliers)
   const gasMode: GasMode = gasModeExtended === "advanced" ? "balanced" : gasModeExtended;
@@ -383,19 +351,7 @@ function MintSetupContent() {
   const totalCostPerWallet = (mintPriceEth + gasCostPerWallet) * qty;
   const grandTotal = totalCostPerWallet * Math.max(1, selectedWalletIds.length);
 
-  // Whether any selected wallet has unverified eligibility for a non-public phase
-  const hasUnverifiedWallets =
-    phaseType !== "PUBLIC" &&
-    selectedWalletIds.some((id) => {
-      const elig = walletEligibilityMap.get(id);
-      return elig !== true; // not confirmed eligible by API
-    });
-
-  const canCreate = Boolean(
-    collection &&
-    selectedWalletIds.length > 0 &&
-    (!hasUnverifiedWallets || eligibilityConfirmed)
-  );
+  const canCreate = Boolean(collection && selectedWalletIds.length > 0);
 
   function toggleWallet(id: string) {
     setSelectedWalletIds((cur) =>
@@ -519,112 +475,213 @@ function MintSetupContent() {
 
         <div className="grid gap-5 xl:grid-cols-[1fr_380px]">
           <div className="space-y-5">
-            {/* ── Collection panel ── */}
+            {/* ── Wallet selection (moved above collection) ── */}
             <Panel>
               <div className="panel-header">
                 <div>
-                  <p className="text-[14px] font-semibold text-graphite-100">Collection</p>
-                  <p className="mt-0.5 text-[12px] text-graphite-500">Start from a scanned OpenSea drop.</p>
+                  <p className="text-[14px] font-semibold text-graphite-100">Wallet Selection</p>
+                  <p className="mt-0.5 text-[12px] text-graphite-500">
+                    {collection
+                      ? "Select a phase below, then pick wallets for that phase."
+                      : "Scan a collection first to see phases and eligible wallets."}
+                  </p>
                 </div>
-                <ClipboardList size={17} className="text-graphite-500" />
+                <WalletCards size={17} className="text-graphite-500" />
               </div>
-              {collectionLoading ? (
-                <div className="empty-state">Loading collection...</div>
-              ) : collection ? (
-                <div className="grid gap-5 p-5 md:grid-cols-[96px_1fr]">
-                  <div className="aspect-square overflow-hidden rounded-md border border-graphite-700 bg-graphite-800">
-                    {collection.imageUrl ? (
-                      <img src={collection.imageUrl} alt={collection.name} className="h-full w-full object-cover" />
-                    ) : null}
-                  </div>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="text-[18px] font-semibold text-graphite-100">{collection.name}</h2>
+
+              {/* ── Collection info strip (compact, inside wallet panel) ── */}
+              {collection && (
+                <div className="mx-5 mt-3 flex items-center gap-3 rounded-md border border-graphite-700 bg-graphite-800/50 px-3 py-2.5">
+                  {collection.imageUrl && (
+                    <img
+                      src={collection.imageUrl}
+                      alt={collection.name}
+                      className="h-9 w-9 shrink-0 rounded-md border border-graphite-700 object-cover"
+                    />
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate text-[13px] font-semibold text-graphite-100">{collection.name}</span>
                       <Badge tone="blue">{collection.chain === "BASE" ? "Base" : "Ethereum"}</Badge>
                     </div>
-                    <p className="mt-2 font-mono text-[12px] text-graphite-500">{collection.contractAddress}</p>
-                    <div className="mt-4 grid gap-3 md:grid-cols-3">
-                      <div>
-                        <p className="label-caps">Slug</p>
-                        <p className="mt-1 text-graphite-200">{collection.slug}</p>
-                      </div>
-                      <div>
-                        <p className="label-caps">Phase</p>
-                        <p className="mt-1 text-graphite-200">{selectedPhase?.phaseType ?? "-"}</p>
-                      </div>
-                      <div>
-                        <p className="label-caps">Price</p>
-                        <p className="mt-1 text-graphite-200">
-                          {selectedPhase ? formatEth(selectedPhase.priceWei) : "-"}
-                        </p>
-                      </div>
-                    </div>
+                    <p className="font-mono text-[10px] text-graphite-500">{collection.contractAddress.slice(0, 18)}…</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      className="rounded-md border border-graphite-700 bg-graphite-800 px-2.5 py-1.5 text-[11px] text-graphite-400 hover:border-graphite-600 hover:text-graphite-200 transition-colors"
+                      onClick={async () => {
+                        await apiFetch(`/collections/${collectionId}/refresh-phases`, { method: "POST" });
+                        queryClient.invalidateQueries({ queryKey: ["collection", collectionId] });
+                      }}
+                    >
+                      ↻ Rescan phases
+                    </button>
+                    <button
+                      type="button"
+                      className="rounded-md border border-graphite-700 bg-graphite-800 px-2.5 py-1.5 text-[11px] text-graphite-400 hover:border-graphite-600 hover:text-graphite-200 transition-colors"
+                      onClick={() => router.push("/scanner")}
+                    >
+                      Change
+                    </button>
                   </div>
                 </div>
-              ) : (
+              )}
+
+              {/* ── Phase detail cards — all phases from collection ── */}
+              {collection && collection.phases.length > 0 && (() => {
+                // Show EVERY phase, ordered by start time, so the list mirrors the
+                // official OpenSea mint schedule exactly. Distinct phases that share
+                // an enum type (e.g. Team Mint + Whitelist, both ALLOWLIST) each get
+                // their own card — keyed by the unique phase id.
+                const orderedPhases = [...collection.phases].sort(
+                  (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+                );
+                return (
+                  <div className="px-5 pt-4">
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-graphite-500">
+                      Collection Phases — select one to filter wallets
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {orderedPhases.map((phase) => {
+                        const isActive = selectedPhase?.id === phase.id;
+                        const now = Date.now();
+                        const start = new Date(phase.startTime).getTime();
+                        const end = phase.endTime ? new Date(phase.endTime).getTime() : null;
+                        const isLive = now >= start && (end === null || now < end);
+                        const isUpcoming = now < start;
+                        const isEnded = end !== null && now >= end;
+                        const statusLabel = isLive ? "Live" : isUpcoming ? "Upcoming" : isEnded ? "Ended" : "—";
+                        const statusColor = isLive
+                          ? "text-status-green-text"
+                          : isUpcoming
+                          ? "text-brand"
+                          : "text-graphite-500";
+                        return (
+                          <button
+                            key={phase.id}
+                            type="button"
+                            onClick={() => setSelectedPhaseId(phase.id)}
+                            className={`rounded-lg border p-3 text-left transition-all ${
+                              isActive
+                                ? "border-brand bg-brand/10 ring-1 ring-brand/30"
+                                : "border-graphite-700 bg-graphite-800/60 hover:border-graphite-600"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="min-w-0 flex-1">
+                                {editingPhaseName === phase.id ? (
+                                  <input
+                                    autoFocus
+                                    type="text"
+                                    defaultValue={phaseNameOverrides[phase.id] ?? phase.name ?? ""}
+                                    placeholder={phase.phaseType}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onBlur={(e) => {
+                                      const val = e.target.value.trim();
+                                      setPhaseNameOverrides((prev) => ({ ...prev, [phase.id]: val }));
+                                      setEditingPhaseName(null);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                                      if (e.key === "Escape") setEditingPhaseName(null);
+                                    }}
+                                    className="w-full rounded border border-brand bg-transparent px-1.5 py-0.5 text-[12px] font-bold text-brand outline-none"
+                                  />
+                                ) : (
+                                  <div className="flex items-center gap-1.5 group/name min-w-0">
+                                    <p className={`truncate text-[12px] font-bold ${isActive ? "text-brand" : "text-graphite-100"}`}>
+                                      {phaseNameOverrides[phase.id] || phase.name || phase.phaseType}
+                                    </p>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); setEditingPhaseName(phase.id); }}
+                                      className="opacity-0 group-hover/name:opacity-100 shrink-0 text-[9px] text-graphite-600 hover:text-graphite-400 transition-opacity"
+                                      title="Edit phase name"
+                                    >✎</button>
+                                  </div>
+                                )}
+                                {(phaseNameOverrides[phase.id] || phase.name) && (
+                                  <p className="text-[10px] text-graphite-600 font-medium uppercase tracking-wide">
+                                    {phase.phaseType}
+                                  </p>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                {isActive && <CheckCircle2 size={12} className="text-brand shrink-0" />}
+                                <span className={`text-[10px] font-semibold ${statusColor}`}>{statusLabel}</span>
+                              </div>
+                            </div>
+                            <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px]">
+                              <div>
+                                <span className="text-graphite-600">Price</span>
+                                <p className="font-mono font-medium text-graphite-200">{formatEth(phase.priceWei)}</p>
+                              </div>
+                              <div>
+                                <span className="text-graphite-600">Max mint</span>
+                                <p className="font-mono font-medium text-graphite-200">
+                                  {phase.maxMint != null ? phase.maxMint : "Unlimited"}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="text-graphite-600">Start</span>
+                                <p className="font-medium text-graphite-300">{formatDateShort(phase.startTime)}</p>
+                              </div>
+                              <div>
+                                <span className="text-graphite-600">End</span>
+                                <p className="font-medium text-graphite-300">
+                                  {phase.endTime ? formatDateShort(phase.endTime) : "No end"}
+                                </p>
+                              </div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {!collection && (
                 <div className="empty-state">
                   <div>
-                    <p className="font-medium text-graphite-200">No scanned collection selected.</p>
+                    <p className="font-medium text-graphite-200">No collection loaded yet.</p>
                     <Button type="button" className="mt-4" onClick={() => router.push("/scanner")}>
                       Open Scanner
                     </Button>
                   </div>
                 </div>
               )}
-            </Panel>
 
-            {/* ── Wallet selection ── */}
-            <Panel>
-              <div className="panel-header">
-                <div>
-                  <p className="text-[14px] font-semibold text-graphite-100">Wallet Selection</p>
-                  <p className="mt-0.5 text-[12px] text-graphite-500">
-                    Only matching-network wallets are shown.
-                    {selectedPhase && selectedPhase.phaseType !== "PUBLIC" && (
-                      <span className="ml-1 text-amber-400">
-                        {selectedPhase.phaseType} phase — verify whitelist eligibility.
-                      </span>
-                    )}
+
+              {collection && compatibleWallets.length > 0 && (
+                <div className="mx-5 mt-4 flex items-center justify-between">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-graphite-500">
+                    Wallets
                   </p>
-                </div>
-                <WalletCards size={17} className="text-graphite-500" />
-              </div>
-
-              {/* WL warning banner for non-public phases */}
-              {selectedPhase && selectedPhase.phaseType !== "PUBLIC" && (
-                <div className="mx-5 mt-3 flex items-start gap-2 rounded-md border border-amber-800/40 bg-amber-950/30 px-3 py-2.5 text-[12px] text-amber-300">
-                  <AlertTriangle size={13} className="mt-0.5 shrink-0" />
-                  <span>
-                    <strong>{selectedPhase.phaseType}</strong> phase requires whitelist access. Wallets below need to be verified before minting.{" "}
-                    <button
-                      type="button"
-                      className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-amber-100"
-                      onClick={() => router.push("/whitelist-checker")}
-                    >
-                      Check eligibility <ExternalLink size={11} />
-                    </button>
-                  </span>
-                </div>
-              )}
-
-              {/* Eligibility confirmation checkbox — shown when API can't verify */}
-              {hasUnverifiedWallets && selectedWalletIds.length > 0 && (
-                <label className="mx-5 mt-3 flex cursor-pointer items-start gap-3 rounded-md border border-graphite-600 bg-graphite-800 px-3 py-3">
-                  <input
-                    type="checkbox"
-                    checked={eligibilityConfirmed}
-                    onChange={(e) => setEligibilityConfirmed(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-brand"
-                  />
-                  <div>
-                    <p className="text-[12px] font-medium text-graphite-100">
-                      I've verified eligibility on OpenSea
-                    </p>
-                    <p className="mt-0.5 text-[11px] text-graphite-500">
-                      Bot couldn't auto-verify — tick this to confirm selected wallets are eligible and unlock task creation.
-                    </p>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-graphite-500">
+                      {selectedWalletIds.length}/{compatibleWallets.length} selected
+                    </span>
+                    {selectedWalletIds.length === compatibleWallets.length ? (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWalletIds([])}
+                        className="rounded-md border border-graphite-700 bg-graphite-800 px-2.5 py-1 text-[11px] font-medium text-graphite-400 hover:border-graphite-600 hover:text-graphite-200 transition-colors"
+                      >
+                        Deselect all
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWalletIds(compatibleWallets.map((w) => w.id))}
+                        className="rounded-md border border-brand/50 bg-brand/10 px-2.5 py-1 text-[11px] font-medium text-brand hover:bg-brand/20 transition-colors"
+                      >
+                        Select all
+                      </button>
+                    )}
                   </div>
-                </label>
+                </div>
               )}
 
               <div className="grid gap-2 p-5 md:grid-cols-2 xl:grid-cols-3">
@@ -634,84 +691,50 @@ function MintSetupContent() {
                   compatibleWallets.map((wallet) => {
                     const selected = selectedWalletIds.includes(wallet.id);
                     return (
-                      <button
+                      <div
                         key={wallet.id}
-                        type="button"
-                        className={`rounded-md border px-3 py-3 text-left transition-colors ${
-                          selected
-                            ? "border-brand bg-brand-bg"
-                            : "border-graphite-700 bg-graphite-800 hover:border-graphite-600"
-                        }`}
+                        draggable
+                        onDragStart={(e) => {
+                          setDragWalletId(wallet.id);
+                          e.dataTransfer.effectAllowed = "copy";
+                          e.dataTransfer.setData("walletId", wallet.id);
+                        }}
+                        onDragEnd={() => setDragWalletId(null)}
                         onClick={() => toggleWallet(wallet.id)}
+                        className={`relative rounded-lg border-2 p-3 text-left cursor-pointer select-none transition-all ${
+                          selected
+                            ? "border-brand bg-brand/10 shadow-[0_0_0_1px_rgba(var(--color-brand-rgb,99,102,241),0.3)]"
+                            : "border-graphite-700 bg-graphite-800 hover:border-graphite-500 hover:bg-graphite-750"
+                        } ${dragWalletId === wallet.id ? "opacity-40 scale-95" : ""}`}
                       >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate font-medium text-graphite-100">{wallet.name}</span>
-                          <Badge tone={selected ? "green" : "slate"}>
-                            {selected ? "Selected" : wallet.status}
-                          </Badge>
+                        {/* Checkbox top-right */}
+                        <div className={`absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full border-2 transition-all ${
+                          selected
+                            ? "border-brand bg-brand"
+                            : "border-graphite-600 bg-transparent"
+                        }`}>
+                          {selected && (
+                            <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+                              <path d="M1 4L3.5 6.5L9 1" stroke="white" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+                            </svg>
+                          )}
                         </div>
-                        <p className="mt-1 font-mono text-[11px] text-graphite-500">
-                          {wallet.address.slice(0, 12)}...
+
+                        {/* Wallet name */}
+                        <p className={`pr-7 text-[13px] font-semibold truncate ${selected ? "text-white" : "text-graphite-100"}`}>
+                          {wallet.name}
                         </p>
-                        {/* Per-wallet phase eligibility indicator */}
-                        {(() => {
-                          const walletElig = walletEligibilityMap.get(wallet.id);
-                          const isChecking = isCheckingEligibility || walletElig === null;
-                          const isManuallyEligible = manualEligibleMap.has(wallet.id);
-                          const isEligible = walletElig === true || isManuallyEligible;
-                          const isUnverifiable = walletElig === "unverifiable" && !isManuallyEligible;
-                          // undefined = map not populated yet (phase is PUBLIC or data not loaded)
-                          if (walletElig === undefined) return null;
-                          return (
-                            <div className="mt-2 flex items-center gap-1.5 flex-wrap">
-                              {isChecking ? (
-                                <span className="text-[10px] font-medium text-graphite-500">Checking...</span>
-                              ) : isEligible ? (
-                                <>
-                                  <CheckCircle2 size={11} className="text-status-green-text" />
-                                  <span className="text-[10px] font-medium text-status-green-text">
-                                    {isManuallyEligible && walletElig !== true ? "Eligible (manual)" : "Eligible"}
-                                  </span>
-                                  {isManuallyEligible && walletElig !== true && (
-                                    <button
-                                      className="text-[10px] text-graphite-500 underline ml-1"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setManualEligibleMap((prev) => {
-                                          const next = new Set(prev);
-                                          next.delete(wallet.id);
-                                          return next;
-                                        });
-                                      }}
-                                    >
-                                      undo
-                                    </button>
-                                  )}
-                                </>
-                              ) : isUnverifiable ? (
-                                <>
-                                  <AlertTriangle size={11} className="text-amber-400" />
-                                  <span className="text-[10px] font-medium text-amber-400">Unverifiable</span>
-                                  <button
-                                    className="text-[10px] font-medium text-graphite-400 underline ml-1"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setManualEligibleMap((prev) => new Set([...prev, wallet.id]));
-                                    }}
-                                  >
-                                    Mark eligible
-                                  </button>
-                                </>
-                              ) : (
-                                <>
-                                  <AlertTriangle size={11} className="text-red-400" />
-                                  <span className="text-[10px] font-medium text-red-400">Not Eligible</span>
-                                </>
-                              )}
-                            </div>
-                          );
-                        })()}
-                      </button>
+                        <p className="mt-0.5 font-mono text-[10px] text-graphite-500">
+                          {wallet.address.slice(0, 14)}…
+                        </p>
+
+                        {/* Status row */}
+                        <div className="mt-2.5 flex items-center justify-end gap-2">
+                          <span className={`text-[10px] font-semibold ${selected ? "text-brand" : "text-graphite-500"}`}>
+                            {selected ? "✓ Selected" : wallet.status}
+                          </span>
+                        </div>
+                      </div>
                     );
                   })
                 )}
@@ -731,13 +754,25 @@ function MintSetupContent() {
                 <label>
                   <span className="mb-1 block text-[11px] font-medium text-graphite-400">Phase</span>
                   <Select
-                    value={phaseType}
-                    onChange={(e) => setPhaseType(e.target.value as CollectionPhase["phaseType"])}
+                    value={selectedPhase?.id ?? ""}
+                    onChange={(e) => setSelectedPhaseId(e.target.value)}
                   >
-                    <option value="GTD">GTD</option>
-                    <option value="FCFS">FCFS</option>
-                    <option value="ALLOWLIST">ALLOWLIST</option>
-                    <option value="PUBLIC">PUBLIC</option>
+                    {collection && collection.phases.length > 0 ? (
+                      // List every phase (sorted by start time) so the dropdown mirrors
+                      // the full OpenSea schedule, keyed by unique phase id.
+                      [...collection.phases]
+                        .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
+                        .map((phase) => {
+                          const dn = phaseNameOverrides[phase.id] || phase.name;
+                          return (
+                            <option key={phase.id} value={phase.id}>
+                              {dn ? `${dn} (${phase.phaseType})` : phase.phaseType} — {formatEth(phase.priceWei)}
+                            </option>
+                          );
+                        })
+                    ) : (
+                      <option value="">No phases</option>
+                    )}
                   </Select>
                 </label>
 

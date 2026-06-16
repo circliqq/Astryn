@@ -8,6 +8,7 @@ export interface ParsedOpenSeaUrl {
 export interface DropPhase {
   id: string;
   type: MintPhaseType;
+  name?: string;
   priceEth: string;
   startTime: string;
   endTime?: string;
@@ -244,12 +245,14 @@ export class OpenSeaClient {
           const maxPerWallet = item.max_per_wallet != null ? Number(item.max_per_wallet) : undefined;
           const startTime = dateStringFrom(item, ["start_time", "startTime", "start_date", "startDate", "starts_at", "startsAt"]);
           if (!startTime) return [];
+          const rawName = String(item.name ?? item.title ?? item.stage_name ?? item.label ?? "");
           return {
             id: String(item.uuid ?? item.id ?? `${slug}-${index}`),
             type: this.normalizePhase(
               String(item.stage_type ?? item.type ?? item.phase_type ?? "public"),
-              String(item.name ?? item.title ?? item.stage_name ?? item.label ?? ""),
+              rawName,
             ),
+            name: rawName || undefined,
             priceEth,
             startTime,
             endTime: dateStringFrom(item, ["end_time", "endTime", "end_date", "endDate", "ends_at", "endsAt"]),
@@ -268,9 +271,11 @@ export class OpenSeaClient {
         const item = phase as Record<string, unknown>;
         const startTime = dateStringFrom(item, ["start_time", "startTime", "start_date", "startDate", "starts_at", "startsAt"]);
         if (!startTime) return [];
+        const rawName = String(item.name ?? item.title ?? item.stage_name ?? item.label ?? "");
         return {
           id: String(item.id ?? `${slug}-${index}`),
-          type: this.normalizePhase(String(item.type ?? item.phase_type ?? "public")),
+          type: this.normalizePhase(String(item.type ?? item.phase_type ?? "public"), rawName),
+          name: rawName || undefined,
           priceEth: String(item.price_eth ?? item.price ?? "0"),
           startTime,
           endTime: dateStringFrom(item, ["end_time", "endTime", "end_date", "endDate", "ends_at", "endsAt"]),
@@ -283,14 +288,201 @@ export class OpenSeaClient {
     }
   }
 
+  /**
+   * Verify eligibility through OpenSea's internal authenticated GraphQL API
+   * (opensea.io SIWE login → gql.opensea.io DropEligibilityQuery). Mirrors the
+   * flow the OpenSea website itself uses, so it works for SeaDrop GTD / presale /
+   * allowlist drops that have no public REST eligibility endpoint.
+   *
+   * Returns an EligibilityResult when eligibility is definitively known, or null
+   * when it could not be determined (caller should fall back to REST endpoints).
+   */
+  private async eligibilityViaGraphQL(
+    slug: string,
+    walletAddress: string,
+    phaseType: MintPhaseType,
+    signMessage: (message: string) => Promise<string>
+  ): Promise<EligibilityResult | null> {
+    const UA =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+    const cookies = new Map<string, string>();
+    const cookieHeader = () => [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+    const storeCookies = (res: Response) => {
+      const getSetCookie = (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
+      const list = typeof getSetCookie === "function" ? getSetCookie.call(res.headers) : [];
+      for (const sc of list) {
+        const pair = sc.split(";")[0] ?? "";
+        const idx = pair.indexOf("=");
+        if (idx > 0) cookies.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim());
+      }
+    };
+    // NOTE: do NOT include x-api-key here — these are browser-facing opensea.io /
+    // gql.opensea.io endpoints, not api.opensea.io. Sending the API key causes
+    // Cloudflare to reject the request with 403 before SIWE can complete.
+    const baseHeaders: Record<string, string> = {
+      accept: "application/json, text/plain, */*",
+      "accept-language": "en-US,en;q=0.9",
+      "accept-encoding": "gzip, deflate, br",
+      "user-agent": UA,
+      "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      origin: "https://opensea.io",
+      referer: "https://opensea.io/"
+    };
+
+    const send = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
+      const headers: Record<string, string> = { ...baseHeaders, ...(init?.headers ?? {}) };
+      if (cookies.size) headers.cookie = cookieHeader();
+      return this.fetchImpl(url, { method: init?.method ?? "GET", headers, body: init?.body }).then(async (res) => {
+        storeCookies(res);
+        return res;
+      });
+    };
+
+    // 1) warm-up (collect Cloudflare cookies)
+    await send("https://opensea.io");
+
+    // 2) nonce
+    const nonceRes = await send("https://opensea.io/__api/auth/siwe/nonce", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: ""
+    });
+    if (!nonceRes.ok) return null;
+    const nonce = (await nonceRes.json().catch(() => null))?.nonce as string | undefined;
+    if (!nonce) return null;
+
+    // 3) build + sign SIWE message (must match OpenSea's exact format)
+    const issuedAt = new Date().toISOString();
+    const statement =
+      "Click to sign in and accept the OpenSea Terms of Service " +
+      "(https://opensea.io/tos) and Privacy Policy (https://opensea.io/privacy).";
+    const address = walletAddress;
+    const siweMessage =
+      `opensea.io wants you to sign in with your account:\n` +
+      `${address}\n\n` +
+      `${statement}\n\n` +
+      `URI: https://opensea.io/\n` +
+      `Version: 1\n` +
+      `Chain ID: 1\n` +
+      `Nonce: ${nonce}\n` +
+      `Issued At: ${issuedAt}`;
+    let signature = await signMessage(siweMessage);
+    if (!signature.startsWith("0x")) signature = `0x${signature}`;
+
+    // 4) verify (establish authenticated session)
+    const verifyRes = await send("https://opensea.io/__api/auth/siwe/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chainArch: "EVM",
+        message: {
+          address,
+          chainId: "1",
+          domain: "opensea.io",
+          issuedAt,
+          nonce,
+          statement,
+          uri: "https://opensea.io/",
+          version: "1"
+        },
+        signature
+      })
+    });
+    if (!verifyRes.ok) return null;
+
+    // 5) DropEligibilityQuery
+    cookies.set("connected-account-server-hint", address.toLowerCase());
+    const query =
+      `query DropEligibilityQuery($collectionSlug: String!, $address: Address!) {\n` +
+      `  dropBySlug(slug: $collectionSlug) {\n` +
+      `    __typename\n` +
+      `    stages {\n` +
+      `      stageType\n      stageIndex\n      isEligible\n` +
+      `      eligibleMaxTotalMintableByWallet\n      __typename\n    }\n  }\n}`;
+    const gqlRes = await send("https://gql.opensea.io/graphql", {
+      method: "POST",
+      // gql.opensea.io is a different origin — update sec-fetch-site accordingly
+      headers: {
+        "content-type": "application/json",
+        "sec-fetch-site": "cross-site",
+        referer: "https://opensea.io/"
+      },
+      body: JSON.stringify({
+        operationName: "DropEligibilityQuery",
+        query,
+        variables: { address, collectionSlug: slug }
+      })
+    });
+    if (!gqlRes.ok) return null;
+    const json = (await gqlRes.json().catch(() => null)) as
+      | { data?: { dropBySlug?: { stages?: Array<Record<string, unknown>> } }; errors?: unknown }
+      | null;
+    if (!json || json.errors) return null;
+    const drop = json.data?.dropBySlug;
+    if (!drop) return null;
+
+    const stages = Array.isArray(drop.stages) ? drop.stages : [];
+    const eligibleStages = stages
+      .filter((s) => Boolean(s.isEligible) && s.stageType !== "PUBLIC_SALE")
+      .map((s) => {
+        const type = typeof s.stageType === "string" ? s.stageType : "STAGE";
+        const idx = s.stageIndex;
+        const name = idx != null ? `${type}#${idx}` : type;
+        const max = Number(s.eligibleMaxTotalMintableByWallet ?? 0);
+        return { name, max };
+      });
+
+    if (eligibleStages.length > 0) {
+      const detail = eligibleStages.map((s) => `${s.name}(${s.max})`).join(", ");
+      return {
+        eligible: true,
+        phaseType,
+        reason: `Wallet is eligible (OpenSea DropEligibilityQuery): ${detail}.`
+      };
+    }
+    return {
+      eligible: false,
+      phaseType,
+      reason: "Wallet is not eligible for any non-public stage (OpenSea DropEligibilityQuery)."
+    };
+  }
+
   async checkEligibility(
     slug: string,
     walletAddress: string,
     phaseType: MintPhaseType,
-    options?: { chain?: string; contractAddress?: string }
+    options?: {
+      chain?: string;
+      contractAddress?: string;
+      /**
+       * EIP-191 personal_sign callback for the wallet being checked. When provided,
+       * eligibility is verified via OpenSea's authenticated GraphQL DropEligibilityQuery
+       * (the same source the OpenSea website uses) — this is the only reliable path for
+       * SeaDrop GTD / allowlist drops whose public REST endpoints return 404.
+       */
+      signMessage?: (message: string) => Promise<string>;
+    }
   ): Promise<EligibilityResult> {
     const chain = options?.chain?.toLowerCase() ?? "ethereum";
     const contract = options?.contractAddress;
+
+    // ── Phase 0: authenticated GraphQL DropEligibilityQuery (most reliable) ────
+    // Only runs when a signMessage callback is supplied (i.e. we have the wallet key).
+    if (options?.signMessage) {
+      try {
+        const gqlResult = await this.eligibilityViaGraphQL(slug, walletAddress, phaseType, options.signMessage);
+        if (gqlResult) return gqlResult;
+        // gqlResult === null → could not determine; fall through to REST phases.
+      } catch {
+        // Network/Cloudflare/SIWE failure → fall through to REST phases.
+      }
+    }
 
     // ── Phase 1: try GET eligibility endpoints ────────────────────────────────
     const getEndpoints = [
