@@ -1,0 +1,3 @@
+curl_cffi>=0.7.0
+eth-account>=0.11.0
+pyuseragents>=1.0.5

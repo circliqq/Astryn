@@ -12,5 +12,16 @@ RUN pnpm --filter './packages/**' build && pnpm --filter @mint-copilot/api build
 
 FROM base AS runner
 ENV NODE_ENV=production
+
+# Install Python + pip + eligibility worker dependencies
+RUN apk add --no-cache python3 py3-pip py3-setuptools
+COPY tools/requirements.txt /tools/requirements.txt
+RUN pip3 install --break-system-packages -r /tools/requirements.txt
+
+# Copy Python worker
+COPY tools/eligibility_worker.py /tools/eligibility_worker.py
+
 COPY --from=build /app /app
+ENV PYTHON_CMD=python3
+ENV ELIGIBILITY_WORKER_PATH=/tools/eligibility_worker.py
 CMD ["node", "apps/api/dist/main.js"]
