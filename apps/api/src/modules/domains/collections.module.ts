@@ -715,4 +715,30 @@ class CollectionsByContractController {
   }
 }
 
-@Module({
+@Module({ controllers: [CollectionsController, CollectionsByContractController] })
+export class CollectionsModule {}
+
+function normalizeContractAddress(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (/^0x[0-9a-fA-F]{40}$/.test(trimmed)) return trimmed.toLowerCase();
+  return null;
+}
+
+function extractOpenSeaAddresses(data: Record<string, unknown>): string[] {
+  const candidates = [
+    data.addresses, data.wallets, data.allowlist, data.entries,
+    data.minters, data.eligible_addresses, data.eligible_wallets
+  ];
+  for (const c of candidates) {
+    if (Array.isArray(c) && c.length > 0) {
+      const addrs = c.map((item: unknown) =>
+        typeof item === "string" ? item :
+        typeof item === "object" && item !== null
+          ? String((item as Record<string, unknown>).address ?? (item as Record<string, unknown>).wallet ?? "")
+          : ""
+      ).filter((a: string) => /^0x[a-fA-F0-9]{40}$/.test(a));
+      if (addrs.length > 0) return addrs;
+    }
+  }
+  return [];
+}
