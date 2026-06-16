@@ -222,10 +222,23 @@ fragment currencyIdentifier on ContractIdentifier {
             drop = ((data.get("data") or {}).get("dropBySlug")) or {}
             raw_stages = drop.get("stages") or []
 
+            def normalize_stage_type(raw: str) -> str:
+                """Map OpenSea stage type strings to our internal phaseType names."""
+                r = (raw or "").upper()
+                if "GUARANTEED" in r or r == "GTD":
+                    return "GTD"
+                if "FCFS" in r:
+                    return "FCFS"
+                if "ALLOW" in r:
+                    return "ALLOWLIST"
+                if "PUBLIC" in r:
+                    return "PUBLIC"
+                return raw  # keep unknown as-is
+
             eligible_stages = []
             for s in raw_stages:
                 if s.get("isEligible") and s.get("stageType") != "PUBLIC_SALE":
-                    stage_type = s.get("stageType", "UNKNOWN")
+                    stage_type = normalize_stage_type(s.get("stageType", "UNKNOWN"))
                     stage_idx = s.get("stageIndex")
                     name = f"{stage_type}#{stage_idx}" if stage_idx is not None else stage_type
                     eligible_stages.append(name)
