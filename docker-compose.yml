@@ -16,8 +16,6 @@ services:
       dockerfile: infra/docker/api.Dockerfile
     env_file: .env
     restart: always
-    ports:
-      - "4000:4000"
     depends_on:
       redis:
         condition: service_healthy
@@ -48,8 +46,6 @@ services:
         - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
     env_file: .env
     restart: always
-    ports:
-      - "3000:3000"
     depends_on:
       - api
 

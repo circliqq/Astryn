@@ -1,9 +1,14 @@
-// Client-side: use relative URL so nginx routes /api/ → api container automatically.
+function normalizeBaseUrl(url: string | undefined) {
+  return (url ?? "").replace(/\/+$/, "");
+}
+
+// Client-side: prefer NEXT_PUBLIC_API_URL when set; otherwise use relative URLs
+// so nginx routes /api/ → api container automatically.
 // Server-side (SSR): use API_URL (internal docker network) or localhost fallback.
 const BASE =
   typeof window !== "undefined"
-    ? ""
-    : (process.env.API_URL ?? "http://localhost:4000");
+    ? normalizeBaseUrl(process.env.NEXT_PUBLIC_API_URL)
+    : normalizeBaseUrl(process.env.API_URL ?? "http://localhost:4000");
 
 export function getToken(): string {
   if (typeof window === "undefined") return "";
@@ -32,9 +37,10 @@ function parseErrorMessage(text: string): string {
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
+  const url = `${BASE}/api${path}`;
 
   try {
-    res = await fetch(`${BASE}/api${path}`, {
+    res = await fetch(url, {
       ...init,
       headers: {
         "Content-Type": "application/json",
@@ -43,7 +49,7 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       }
     });
   } catch {
-    throw new Error(`Cannot reach the API at ${BASE}. Make sure the backend is running.`);
+    throw new Error(`Cannot reach the API at ${BASE || "same origin"}. Make sure the backend is running.`);
   }
 
   if (res.status === 401) {
