@@ -6,7 +6,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { privateKeyToAccount } from "viem/accounts";
 import { decryptPrivateKey } from "@mint-copilot/wallet-crypto";
-import { OpenSeaClient, parseOpenSeaUrl, type DropEligibilityStage } from "@mint-copilot/opensea";
+import { parseOpenSeaUrl, type DropEligibilityStage } from "@mint-copilot/opensea";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
 import { PrismaService } from "../prisma/prisma.service.js";
@@ -260,56 +260,26 @@ class WhitelistCheckerController {
       proxies: readProxyList(this.config)
     });
 
-    let results: WalletCheckResult[] | null = null;
-    if (pythonResult?.results) {
-      const byAddress = new Map(
-        pythonResult.results.map((result) => [(result.address ?? "").toLowerCase(), result])
-      );
-      results = preparedWallets.map((wallet) => {
-        const checked = byAddress.get(wallet.walletAddress.toLowerCase());
-        const stages = (checked?.stages ?? []).map(stageFromPython);
-        return {
-          walletId: wallet.walletId,
-          walletName: wallet.walletName,
-          walletAddress: wallet.walletAddress,
-          eligible: !checked?.error && stages.length > 0,
-          stages,
-          error: checked?.error ?? null
-        };
-      });
-    }
+    const byAddress = new Map(
+      (pythonResult?.results ?? []).map((result) => [(result.address ?? "").toLowerCase(), result])
+    );
+    const workerError =
+      pythonResult === null
+        ? "Python whitelist checker is not installed in this API container."
+        : pythonResult.error ?? "Python whitelist checker returned no wallet results.";
 
-    if (!results) {
-      const client = new OpenSeaClient({ apiKey: this.config.getOrThrow<string>("OPENSEA_API_KEY") });
-      results = await mapLimit(preparedWallets, 1, async (wallet): Promise<WalletCheckResult> => {
-        try {
-          const account = privateKeyToAccount(wallet.privateKey);
-          const checked = await client.checkDropEligibilityStages(
-            slug,
-            account.address,
-            (message) => account.signMessage({ message })
-          );
-
-          return {
-            walletId: wallet.walletId,
-            walletName: wallet.walletName,
-            walletAddress: wallet.walletAddress,
-            eligible: checked.stages.length > 0,
-            stages: checked.stages,
-            error: null
-          };
-        } catch (error) {
-          return {
-            walletId: wallet.walletId,
-            walletName: wallet.walletName,
-            walletAddress: wallet.walletAddress,
-            eligible: false,
-            stages: [],
-            error: error instanceof Error ? error.message : String(error)
-          };
-        }
-      });
-    }
+    const results = preparedWallets.map((wallet): WalletCheckResult => {
+      const checked = byAddress.get(wallet.walletAddress.toLowerCase());
+      const stages = (checked?.stages ?? []).map(stageFromPython);
+      return {
+        walletId: wallet.walletId,
+        walletName: wallet.walletName,
+        walletAddress: wallet.walletAddress,
+        eligible: !checked?.error && stages.length > 0,
+        stages,
+        error: checked ? checked.error ?? null : workerError
+      };
+    });
 
     const stageSummary = new Map<string, { stage: string; maxMint: number; count: number }>();
     for (const result of results) {
