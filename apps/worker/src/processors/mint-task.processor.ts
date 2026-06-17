@@ -2,9 +2,7 @@ import { Queue, type Job } from "bullmq";
 import type { PrismaClient } from "@prisma/client";
 import { decryptPrivateKey } from "@mint-copilot/wallet-crypto";
 import {
-  createSeaDropAllowListMintPayload,
   createSeaDropPublicMintPayload,
-  createSeaDropSignedMintPayload,
   createMintPublicClient,
   fetchSeaDropPublicStartTime,
   SEA_DROP_ADDRESS,
@@ -32,11 +30,7 @@ import { logger } from "@mint-copilot/logger";
 import { createPublicClient, webSocket, keccak256, toBytes, type Hex } from "viem";
 import { mainnet, base as viemBase } from "viem/chains";
 import { privateKeyToAccount } from "viem/accounts";
-import type { EligibilityResult, MintPayload, SeaportOrderParameters } from "@mint-copilot/opensea";
-import { spawn } from "child_process";
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
+import type { MintPayload, SeaportOrderParameters } from "@mint-copilot/opensea";
 
 // ── Seaport constants ─────────────────────────────────────────────────────────
 const SEAPORT_V15_ADDRESS = "0x0000000000000068F116a894984e2DB1123eB395" as `0x${string}`;
@@ -47,7 +41,6 @@ const ZERO_BYTES32 = "0x00000000000000000000000000000000000000000000000000000000
 const SEAPORT_CHAIN_IDS: Record<string, number> = { ethereum: 1, base: 8453 };
 const OPENSEA_FEE_BPS = 250n; // 2.5%
 const TRANSFER_EVENT_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef";
-const PYTHON_WORKER_PATH = findPythonWorker();
 
 // Minimal ABI for reading supply from ERC721 contracts.
 // Covers totalSupply / maxSupply / _maxSupply naming conventions.
@@ -408,9 +401,6 @@ export async function executeMintTask(
             },
             { masterKey: env("ENCRYPTION_MASTER_KEY") },
           );
-          const eligibility = await resolveEligibility(
-            task.phaseType,
-          );
           const payload = await loadMintPayload(
             openSea,
             task.collection,
@@ -418,7 +408,6 @@ export async function executeMintTask(
             wallet.address,
             targetAt,
             mintQuantity,
-            eligibility,
             async (message, contextJson) =>
               log(prisma, task.id, "warn", message, contextJson),
           );
@@ -568,10 +557,6 @@ export async function executeMintTask(
               encryptionAuthTag: wallet.encryptionAuthTag,
               encryptionVersion: wallet.encryptionVersion,
             },
-            // Use OpenSea phase supply instead of contract RPC call in supply watcher.
-            stageMaxSupply: eligibility.mintParams?.maxTokenSupplyForStage
-              ? BigInt(eligibility.mintParams.maxTokenSupplyForStage)
-              : undefined,
           } satisfies PreparedMint;
         } catch (error) {
           await failWallet(prisma, task.id, taskWallet.id, taskWallet.wallet.id, error, "preflight");
@@ -1251,17 +1236,6 @@ async function runWalletPreFlight(
 }
 // ─────────────────────────────────────────────────────────────────────────
 
-async function resolveEligibility(
-  phaseType: string,
-): Promise<EligibilityResult> {
-  const openSeaPhase = toOpenSeaPhase(phaseType);
-  return {
-    eligible: true,
-    phaseType: openSeaPhase,
-    reason: "Eligibility pre-check disabled; mint payload resolution will determine execution.",
-  };
-}
-
 async function loadMintPayload(
   openSea: OpenSeaClient,
   collection: {
@@ -1279,7 +1253,6 @@ async function loadMintPayload(
   walletAddress: string,
   targetAt: Date,
   quantity: number,
-  eligibility: EligibilityResult,
   warn: (message: string, contextJson?: unknown) => Promise<void>,
 ): Promise<MintPayload> {
   if (phaseType === "PUBLIC") {
@@ -1299,20 +1272,6 @@ async function loadMintPayload(
       mintPriceWei: resolveMintPriceWei(collection, phaseType, targetAt),
       quantity,
     });
-  }
-
-  const eligibilityPayload = restrictedPayloadFromEligibility(
-    collection.contractAddress,
-    walletAddress,
-    quantity,
-    eligibility,
-  );
-  if (eligibilityPayload) {
-    await warn(
-      `Using ${eligibility.signature ? "signed" : "allowlist"} SeaDrop mint payload for ${shortAddress(walletAddress)}.`,
-      { phaseType },
-    );
-    return eligibilityPayload;
   }
 
   try {
@@ -1392,21 +1351,6 @@ async function loadMintPayload(
     // Fall back to the original T=0 retry path.
     await sleepUntil(targetAt);
 
-    const refreshedEligibility = eligibility;
-    const refreshedEligibilityPayload = restrictedPayloadFromEligibility(
-      collection.contractAddress,
-      walletAddress,
-      quantity,
-      refreshedEligibility,
-    );
-    if (refreshedEligibilityPayload) {
-      await warn(
-        `Using refreshed ${refreshedEligibility.signature ? "signed" : "allowlist"} SeaDrop mint payload for ${shortAddress(walletAddress)}.`,
-        { phaseType },
-      );
-      return refreshedEligibilityPayload;
-    }
-
     try {
       return await openSea.getMintPayload(
         collection.slug,
@@ -1420,38 +1364,6 @@ async function loadMintPayload(
       );
     }
   }
-}
-
-function restrictedPayloadFromEligibility(
-  contractAddress: string,
-  walletAddress: string,
-  quantity: number,
-  eligibility: EligibilityResult,
-): MintPayload | undefined {
-  if (eligibility.payload) return eligibility.payload;
-
-  if (eligibility.mintParams && eligibility.proof) {
-    return createSeaDropAllowListMintPayload({
-      nftContract: contractAddress as `0x${string}`,
-      minter: walletAddress as `0x${string}`,
-      mintParams: eligibility.mintParams,
-      proof: eligibility.proof as Hex[],
-      quantity,
-    });
-  }
-
-  if (eligibility.mintParams && eligibility.signature && eligibility.salt) {
-    return createSeaDropSignedMintPayload({
-      nftContract: contractAddress as `0x${string}`,
-      minter: walletAddress as `0x${string}`,
-      mintParams: eligibility.mintParams,
-      salt: eligibility.salt,
-      signature: eligibility.signature,
-      quantity,
-    });
-  }
-
-  return undefined;
 }
 
 function resolveMintPriceWei(
@@ -2454,140 +2366,6 @@ async function waitForAnyReceipt(
 // ──────────────────────────────────────────────────────────────────────────
 
 // ── Utility helpers ───────────────────────────────────────────────────────
-
-type PyWalletResult = { address: string; eligible: boolean; stages: string[]; error: string | null };
-
-function findPythonWorker(): string | null {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = path.dirname(__filename);
-  const candidates = [
-    process.env.ELIGIBILITY_WORKER_PATH,
-    path.resolve(__dirname, "../../../../tools/eligibility_worker.py"),
-    path.resolve(process.cwd(), "tools/eligibility_worker.py"),
-    path.resolve(process.cwd(), "../../tools/eligibility_worker.py"),
-  ].filter(Boolean) as string[];
-
-  for (const candidate of candidates) {
-    try {
-      if (fs.existsSync(candidate)) return candidate;
-    } catch {
-      // Try the next candidate.
-    }
-  }
-  return null;
-}
-
-function pythonCommandCandidates() {
-  const defaults = process.platform === "win32"
-    ? ["python", "py", "python3"]
-    : ["python3", "python", "py"];
-  return [...new Set([process.env.PYTHON_CMD, ...defaults].filter(Boolean) as string[])];
-}
-
-function workerOutputError(stderr: string, stdout: string) {
-  return (stderr.trim() || stdout.trim() || "Python worker bad output").slice(0, 500);
-}
-
-function runPythonWorker<T>(
-  workerPath: string,
-  payload: unknown,
-  timeoutMs: number,
-  parseOutput: (stdout: string) => T,
-  failureValue: (error: string) => T
-): Promise<T> {
-  const commands = pythonCommandCandidates();
-
-  return new Promise((resolve) => {
-    const tryCommand = (index: number) => {
-      const pythonCmd = commands[index];
-      let proc: ReturnType<typeof spawn>;
-      try {
-        proc = spawn(pythonCmd, [workerPath], { stdio: ["pipe", "pipe", "pipe"] });
-      } catch (error) {
-        if (index + 1 < commands.length) {
-          tryCommand(index + 1);
-          return;
-        }
-        const message = error instanceof Error ? error.message : String(error);
-        resolve(failureValue(`Failed to spawn Python (${commands.join(", ")}): ${message}`));
-        return;
-      }
-
-      let settled = false;
-      let stdout = "";
-      let stderr = "";
-      proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
-      proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
-
-      const timer = setTimeout(() => {
-        settled = true;
-        proc.kill();
-        resolve(failureValue("Python worker timed out"));
-      }, timeoutMs);
-
-      proc.once("error", (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        if (index + 1 < commands.length) {
-          tryCommand(index + 1);
-          return;
-        }
-        resolve(failureValue(`Failed to spawn Python (${commands.join(", ")}): ${error.message}`));
-      });
-
-      proc.once("close", () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        try {
-          resolve(parseOutput(stdout.trim()));
-        } catch {
-          resolve(failureValue(workerOutputError(stderr, stdout)));
-        }
-      });
-
-      proc.stdin?.write(JSON.stringify(payload));
-      proc.stdin?.end();
-    };
-
-    tryCommand(0);
-  });
-}
-
-function checkEligibilityViaPython(
-  slug: string,
-  walletAddress: string,
-  privkey: `0x${string}`,
-  workerPath: string
-): Promise<PyWalletResult> {
-  const proxies = process.env.ELIGIBILITY_PROXIES
-    ? process.env.ELIGIBILITY_PROXIES.split(",").map((p) => p.trim()).filter(Boolean)
-    : [];
-  const failure = (error: string): PyWalletResult => ({
-    address: walletAddress,
-    eligible: false,
-    stages: [],
-    error,
-  });
-
-  return runPythonWorker(
-    workerPath,
-    { slug, wallets: [{ address: walletAddress, privkey }], threads: 1, delay: 0, proxies },
-    numberEnv("ELIGIBILITY_WORKER_TIMEOUT_MS", 45_000),
-    (stdout) => {
-      const parsed = JSON.parse(stdout) as { results?: PyWalletResult[] };
-      return parsed.results?.[0] ?? failure("Python worker returned no result");
-    },
-    failure
-  );
-}
-
-function pythonStageMatchesPhase(stage: string, phaseType: string) {
-  const normalizedStage = stage.toUpperCase();
-  const normalizedPhase = phaseType.toUpperCase();
-  return normalizedStage === normalizedPhase || normalizedStage.startsWith(`${normalizedPhase}#`);
-}
 
 function env(name: string): string {
   const value = process.env[name];

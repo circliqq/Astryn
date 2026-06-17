@@ -10,7 +10,6 @@ import { ConsolidationModule } from "./domains/consolidation.module.js";
 import { DistributorModule } from "./domains/distributor.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { CollectionsModule } from "./domains/collections.module.js";
-import { EligibilityModule } from "./domains/eligibility.module.js";
 import { FundingModule } from "./domains/funding.module.js";
 import { GasModule } from "./domains/gas.module.js";
 import { HealthModule } from "./domains/health.module.js";
@@ -49,7 +48,6 @@ import { TraderTrackerModule } from "./domains/trader-tracker.module.js";
     WalletsModule,
     CollectionsModule,
     OpenSeaModule,
-    EligibilityModule,
     WalletHealthModule,
     FundingModule,
     SimulationModule,
