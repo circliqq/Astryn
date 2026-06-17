@@ -243,39 +243,6 @@ function MintSetupContent() {
   // Enum type derived from the currently selected phase. Task scheduling still
   // operates on the 4-value enum.
   const phaseType: CollectionPhase["phaseType"] = selectedPhase?.phaseType ?? "PUBLIC";
-  const selectedPhaseEligibilityLabel = selectedPhase
-    ? `${selectedPhase.phaseType} ${phaseNameOverrides[selectedPhase.id] || selectedPhase.name || ""}`
-    : "PUBLIC";
-
-  function stageMatchesPhase(stage: WhitelistCheckerStage, phase: CollectionPhase | null, phaseLabel: string) {
-    if (!phase || phase.phaseType === "PUBLIC") return true;
-    const stageText = `${stage.stage} ${stage.stageType}`.toUpperCase();
-    const phaseText = phaseLabel.toUpperCase();
-
-    if (phaseText.includes("GTD") || phaseText.includes("GUARANTEED")) {
-      return stageText.includes("GTD") || stageText.includes("GUARANTEED");
-    }
-    if (phaseText.includes("FCFS")) return stageText.includes("FCFS");
-    if (
-      phase.phaseType === "ALLOWLIST" ||
-      phaseText.includes("ALLOW") ||
-      phaseText.includes("PRESALE") ||
-      phaseText.includes("PRE_SALE") ||
-      phaseText.includes("PRIVATE") ||
-      phaseText.includes("TEAM")
-    ) {
-      return (
-        stageText.includes("ALLOWLIST") ||
-        stageText.includes("PRESALE") ||
-        stageText.includes("PRE_SALE") ||
-        stageText.includes("PRIVATE") ||
-        stageText.includes("TEAM")
-      );
-    }
-    if (phase.phaseType === "GTD") return stageText.includes("GTD") || stageText.includes("GUARANTEED");
-    if (phase.phaseType === "FCFS") return stageText.includes("FCFS");
-    return false;
-  }
 
   // Initialise / repair the selection whenever the collection (and its phases) load.
   useEffect(() => {
@@ -319,10 +286,7 @@ function MintSetupContent() {
             next.set(wallet.walletId, "error");
             continue;
           }
-          const eligibleForPhase = wallet.stages.some((stage) =>
-            stageMatchesPhase(stage, selectedPhase, selectedPhaseEligibilityLabel)
-          );
-          next.set(wallet.walletId, eligibleForPhase ? "eligible" : "not_eligible");
+          next.set(wallet.walletId, wallet.eligible ? "eligible" : "not_eligible");
         }
         for (const id of walletIds) {
           if (!next.has(id)) next.set(id, "not_eligible");
@@ -338,7 +302,7 @@ function MintSetupContent() {
     return () => {
       cancelled = true;
     };
-  }, [collection, compatibleWallets, phaseType, selectedPhase, selectedPhaseEligibilityLabel]);
+  }, [collection, compatibleWallets, phaseType]);
 
   // ── Gas simulation — fires when collection + at least one wallet is ready ────
   // Uses the first selected wallet (or first compatible wallet) to call
