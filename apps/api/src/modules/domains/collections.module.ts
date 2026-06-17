@@ -291,6 +291,45 @@ class CollectionsController {
       }
     });
 
+    const disabledPhaseWindows = resolvePhaseWindows(collection.phases);
+    const disabledWallets = walletRecords.map((record) => ({ id: record.id, name: record.name, address: record.address }));
+    const disabledWalletResults = disabledWallets.map((wallet) => {
+      const phases = disabledPhaseWindows.map((window) => ({
+        phaseType: window.phaseType,
+        startTime: window.startTime,
+        endTime: window.endTime,
+        phaseStatus: window.phaseStatus,
+        eligible: window.phaseStatus !== "ENDED",
+        checked: true,
+        reason: "Eligibility pre-check disabled."
+      }));
+
+      return {
+        walletId: wallet.id,
+        walletName: wallet.name,
+        walletAddress: wallet.address,
+        eligiblePhaseTypes: phases.filter((phase) => phase.eligible).map((phase) => phase.phaseType),
+        unverifiablePhaseTypes: [],
+        phases
+      };
+    });
+
+    return {
+      collectionId: collection.id,
+      collectionName: collection.name,
+      collectionSlug: collection.slug,
+      phaseSource: phaseData.phaseSource,
+      phaseWarning: phaseData.phaseWarning,
+      phaseCheckedAt: phaseData.phaseCheckedAt,
+      phaseWindows: disabledPhaseWindows.map((window) => ({
+        phaseType: window.phaseType,
+        startTime: window.startTime.toISOString(),
+        endTime: window.endTime?.toISOString() ?? null,
+        phaseStatus: window.phaseStatus
+      })),
+      wallets: disabledWalletResults
+    };
+
     // Decrypt all private keys upfront — used for both the Node.js SIWE signer
     // and the Python worker fallback (which needs the raw key via stdin).
     const masterKey = this.config.getOrThrow<string>("ENCRYPTION_MASTER_KEY");
@@ -340,7 +379,7 @@ class CollectionsController {
           const pyResults = await checkEligibilityViaPythonBulk(
             collection.slug,
             walletsForPython,
-            PYTHON_WORKER_PATH,
+            PYTHON_WORKER_PATH!,
             // Allow up to (wallets × 45 s) but cap at 110 s to stay under nginx timeout
             Math.min(walletsForPython.length * 45_000, 110_000)
           );
@@ -589,8 +628,11 @@ class CollectionsController {
 
   @Post("check-eligibility")
   async eligibility(@Body() body: EligibilityDto) {
-    const client = new OpenSeaClient({ apiKey: this.config.getOrThrow<string>("OPENSEA_API_KEY") });
-    return client.checkEligibility(body.slug, body.walletAddress, body.phaseType);
+    return {
+      eligible: true,
+      phaseType: body.phaseType,
+      reason: "Eligibility pre-check disabled."
+    };
   }
 
   @Post(":id/refresh-phases")

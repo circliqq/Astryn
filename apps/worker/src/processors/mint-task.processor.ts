@@ -409,16 +409,7 @@ export async function executeMintTask(
             { masterKey: env("ENCRYPTION_MASTER_KEY") },
           );
           const eligibility = await resolveEligibility(
-            openSea,
-            task.collection.slug,
-            wallet.address,
             task.phaseType,
-            privateKey,
-            async (message, contextJson) =>
-              log(prisma, task.id, "warn", message, contextJson),
-            // SIWE signer for OpenSea's authenticated DropEligibilityQuery (reliable
-            // for SeaDrop GTD / allowlist drops). Falls back to REST if it fails.
-            async (message: string) => privateKeyToAccount(privateKey).signMessage({ message }),
           );
           const payload = await loadMintPayload(
             openSea,
@@ -493,7 +484,10 @@ export async function executeMintTask(
 
           const readiness = calculateReadinessScore({
             walletFunded: balanceWei > payload.value + gasEstimate.totalCostWei,
-            eligible: eligibility.eligible,
+            // Eligibility pre-checks are intentionally disabled. OpenSea can
+            // return false negatives for upcoming WL/GTD phases; the actual
+            // mint payload/proof resolution remains the execution authority.
+            eligible: true,
             simulationPassed: !simulationFailed,
             gasUnderCap: gasEstimate.underCap,
             rpcHealthy: true,
@@ -520,7 +514,6 @@ export async function executeMintTask(
           //
           // Only throw on hard blockers that cannot self-resolve:
           //   - walletFunded  → wallet doesn't have enough ETH (won't fix itself)
-          //   - eligible      → wallet is not on the allowlist
           //   - gasUnderCap   → estimated cost exceeds configured cap
           const SIM_BLOCKER = "Simulation failed, so the transaction will not be sent.";
           const hardBlockers = readiness.blockers.filter((b) => b !== SIM_BLOCKER);
@@ -1259,49 +1252,14 @@ async function runWalletPreFlight(
 // ─────────────────────────────────────────────────────────────────────────
 
 async function resolveEligibility(
-  openSea: OpenSeaClient,
-  slug: string,
-  walletAddress: string,
   phaseType: string,
-  privateKey: `0x${string}` | undefined,
-  warn: (message: string, contextJson?: unknown) => Promise<void>,
-  signMessage?: (message: string) => Promise<string>,
 ): Promise<EligibilityResult> {
   const openSeaPhase = toOpenSeaPhase(phaseType);
-  if (openSeaPhase === "public") return { eligible: true, phaseType: "public" };
-
-  if (privateKey && PYTHON_WORKER_PATH) {
-    const pyResult = await checkEligibilityViaPython(slug, walletAddress, privateKey, PYTHON_WORKER_PATH);
-    if (!pyResult.error) {
-      const phaseEligible = pyResult.stages.some((stage) => pythonStageMatchesPhase(stage, phaseType));
-      return {
-        eligible: phaseEligible,
-        phaseType: openSeaPhase,
-        reason: phaseEligible
-          ? `Wallet is eligible (OpenSea DropEligibilityQuery): ${pyResult.stages.join(", ")}.`
-          : `Wallet is not eligible for ${phaseType} (OpenSea DropEligibilityQuery).`,
-      };
-    }
-
-    await warn(
-      `Python eligibility check for ${shortAddress(walletAddress)} is unavailable; trying OpenSea client fallback.`,
-      { phaseType, rawError: pyResult.error },
-    );
-  }
-
-  try {
-    return await openSea.checkEligibility(slug, walletAddress, openSeaPhase, { signMessage });
-  } catch (error) {
-    await warn(
-      `Eligibility check for ${shortAddress(walletAddress)} is unavailable; continuing with mint payload resolution.`,
-      { phaseType, rawError: rawErrorMessage(error) },
-    );
-    return {
-      eligible: true,
-      phaseType: openSeaPhase,
-      reason: "Eligibility check unavailable before mint payload resolution.",
-    };
-  }
+  return {
+    eligible: true,
+    phaseType: openSeaPhase,
+    reason: "Eligibility pre-check disabled; mint payload resolution will determine execution.",
+  };
 }
 
 async function loadMintPayload(
@@ -1434,9 +1392,7 @@ async function loadMintPayload(
     // Fall back to the original T=0 retry path.
     await sleepUntil(targetAt);
 
-    const refreshedEligibility = await openSea
-      .checkEligibility(collection.slug, walletAddress, toOpenSeaPhase(phaseType))
-      .catch(() => eligibility);
+    const refreshedEligibility = eligibility;
     const refreshedEligibilityPayload = restrictedPayloadFromEligibility(
       collection.contractAddress,
       walletAddress,
