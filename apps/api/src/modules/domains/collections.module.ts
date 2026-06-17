@@ -431,10 +431,54 @@ class CollectionsController {
       // ── Python bulk result is the ONLY source of truth ─────────────────────
       // Node.js SIWE is blocked by Cloudflare — Python curl_cffi is used exclusively.
       // Stages are normalized: GUARANTEED→GTD, ALLOWLIST→ALLOWLIST, FCFS→FCFS.
-      const pyResult = pyBulkResultByAddress.get(wallet.address.toLowerCase());
+      const fallbackCheck = async (primaryReason: string) => {
+        const signer = signerByWalletId.get(wallet.id);
+        let signedCheckError: string | null = null;
 
-      if (!pyResult) {
-        // Bulk check didn't return a result for this wallet
+        if (signer) {
+          try {
+            const signedResult = await client.checkEligibility(
+              collection.slug,
+              wallet.address,
+              toOpenSeaPhase(window.phaseType),
+              {
+                chain: collection.chain === "BASE" ? "base" : "ethereum",
+                contractAddress: collection.contractAddress ?? undefined,
+                signMessage: signer,
+              }
+            );
+            return {
+              phaseType: window.phaseType,
+              startTime: window.startTime,
+              endTime: window.endTime,
+              phaseStatus: window.phaseStatus,
+              eligible: window.phaseStatus !== "ENDED" && signedResult.eligible,
+              checked: true,
+              reason: signedResult.reason
+                ? `${signedResult.reason} Fallback after: ${primaryReason}`
+                : `Eligibility verified via OpenSea fallback after: ${primaryReason}`
+            };
+          } catch (error) {
+            signedCheckError = error instanceof Error ? error.message : String(error);
+          }
+        }
+
+        const allowlist = await getAllowlistAddressSet();
+        if (allowlist) {
+          const eligible = allowlist.has(wallet.address.toLowerCase());
+          return {
+            phaseType: window.phaseType,
+            startTime: window.startTime,
+            endTime: window.endTime,
+            phaseStatus: window.phaseStatus,
+            eligible: window.phaseStatus !== "ENDED" && eligible,
+            checked: true,
+            reason: eligible
+              ? `Wallet found in allowlist fallback. Primary check: ${primaryReason}`
+              : `Wallet not found in allowlist fallback. Primary check: ${primaryReason}`
+          };
+        }
+
         return {
           phaseType: window.phaseType,
           startTime: window.startTime,
@@ -442,21 +486,21 @@ class CollectionsController {
           phaseStatus: window.phaseStatus,
           eligible: false,
           checked: false,
-          reason: "Eligibility check did not complete for this wallet."
+          reason: signedCheckError
+            ? `${primaryReason}; OpenSea fallback failed: ${signedCheckError}`
+            : primaryReason
         };
+      };
+
+      const pyResult = pyBulkResultByAddress.get(wallet.address.toLowerCase());
+
+      if (!pyResult) {
+        return fallbackCheck("Python eligibility check did not complete for this wallet.");
       }
 
       if (pyResult.error) {
         console.warn(`[eligibility] Python error for ${wallet.address}: ${pyResult.error}`);
-        return {
-          phaseType: window.phaseType,
-          startTime: window.startTime,
-          endTime: window.endTime,
-          phaseStatus: window.phaseStatus,
-          eligible: false,
-          checked: false,
-          reason: `Check failed: ${pyResult.error}`
-        };
+        return fallbackCheck(`Python eligibility check failed: ${pyResult.error}`);
       }
 
       // Match stage against current phaseType: "GTD#0".startsWith("GTD") etc.
