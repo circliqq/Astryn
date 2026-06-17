@@ -79,6 +79,25 @@ interface Collection {
 }
 
 type ExtendedGasMode = GasMode | "advanced";
+type WalletEligibility = boolean | "unverifiable" | null;
+
+interface EligibilityMatrixWalletPhase {
+  phaseType: CollectionPhase["phaseType"];
+  eligible: boolean;
+  checked: boolean;
+  reason?: string;
+}
+
+interface EligibilityMatrixWallet {
+  walletId: string;
+  eligiblePhaseTypes: string[];
+  unverifiablePhaseTypes?: string[];
+  phases?: EligibilityMatrixWalletPhase[];
+}
+
+interface EligibilityMatrixResponse {
+  wallets: EligibilityMatrixWallet[];
+}
 
 function formatEth(wei: string) {
   try {
@@ -164,7 +183,8 @@ function MintSetupContent() {
 
   // ── Per-wallet eligibility (display only, never blocks task creation) ───────
   // null = checking, true = eligible, false = not eligible, "unverifiable" = API can't check
-  const [walletEligibilityMap, setWalletEligibilityMap] = useState<Map<string, boolean | "unverifiable" | null>>(new Map());
+  const [walletEligibilityMap, setWalletEligibilityMap] = useState<Map<string, WalletEligibility>>(new Map());
+  const [walletEligibilityReasonMap, setWalletEligibilityReasonMap] = useState<Map<string, string>>(new Map());
   const [isCheckingEligibility, setIsCheckingEligibility] = useState(false);
 
   // ── Instant Flipper state ─────────────────────────────────────────────────
@@ -293,13 +313,17 @@ function MintSetupContent() {
     }
     setIsCheckingEligibility(true);
     setWalletEligibilityMap(new Map(compatibleWallets.map((w) => [w.id, null])));
-    apiFetch<{ wallets: Array<{ walletId: string; eligiblePhaseTypes: string[]; unverifiablePhaseTypes?: string[] }> }>(
+    setWalletEligibilityReasonMap(new Map());
+    apiFetch<EligibilityMatrixResponse>(
       `/collections/${collectionId}/eligibility-matrix`,
       { method: "POST", body: JSON.stringify({ walletIds: compatibleWallets.map((w) => w.id) }) }
     )
       .then((data) => {
-        const map = new Map<string, boolean | "unverifiable">();
+        const map = new Map<string, WalletEligibility>();
+        const reasonMap = new Map<string, string>();
         for (const w of data.wallets) {
+          const phaseResult = w.phases?.find((phase) => phase.phaseType === phaseType);
+          if (phaseResult?.reason) reasonMap.set(w.walletId, phaseResult.reason);
           if (w.eligiblePhaseTypes.includes(phaseType)) {
             map.set(w.walletId, true);
           } else if (w.unverifiablePhaseTypes?.includes(phaseType)) {
@@ -309,6 +333,7 @@ function MintSetupContent() {
           }
         }
         setWalletEligibilityMap(map);
+        setWalletEligibilityReasonMap(reasonMap);
       })
       .catch(() => {/* keep as null */})
       .finally(() => setIsCheckingEligibility(false));
@@ -777,25 +802,26 @@ function MintSetupContent() {
                                 );
                               }
                               const walletElig = walletEligibilityMap.get(wallet.id);
+                              const eligibilityReason = walletEligibilityReasonMap.get(wallet.id);
                               const isChecking = isCheckingEligibility || walletElig === null;
                               if (walletElig === undefined) return null;
                               if (isChecking) return <span className="text-[10px] text-graphite-500">Checking…</span>;
                               if (walletElig === true) return (
                                 <>
                                   <CheckCircle2 size={11} className="text-status-green-text shrink-0" />
-                                  <span className="text-[10px] font-medium text-status-green-text">Eligible</span>
+                                  <span className="text-[10px] font-medium text-status-green-text" title={eligibilityReason}>Eligible</span>
                                 </>
                               );
                               if (walletElig === "unverifiable") return (
                                 <>
                                   <AlertTriangle size={11} className="text-amber-400 shrink-0" />
-                                  <span className="text-[10px] font-medium text-amber-400">Unverifiable</span>
+                                  <span className="text-[10px] font-medium text-amber-400" title={eligibilityReason}>Unverifiable</span>
                                 </>
                               );
                               return (
                                 <>
                                   <AlertTriangle size={11} className="text-red-400 shrink-0" />
-                                  <span className="text-[10px] font-medium text-red-400">Not Eligible</span>
+                                  <span className="text-[10px] font-medium text-red-400" title={eligibilityReason}>Not Eligible</span>
                                 </>
                               );
                             })()}
