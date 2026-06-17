@@ -1,7 +1,9 @@
 node_modules
+.venv/
 .next
 dist
 coverage
+__pycache__/
 .env
 .env.*
 !.env.example

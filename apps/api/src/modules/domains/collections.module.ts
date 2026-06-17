@@ -35,6 +35,84 @@ function findPythonWorker(): string | null {
 
 type PyWalletResult = { address: string; eligible: boolean; stages: string[]; error: string | null };
 
+function pythonCommandCandidates() {
+  const defaults = process.platform === "win32"
+    ? ["python", "py", "python3"]
+    : ["python3", "python", "py"];
+  return [...new Set([process.env.PYTHON_CMD, ...defaults].filter(Boolean) as string[])];
+}
+
+function workerOutputError(stderr: string, stdout: string) {
+  return (stderr.trim() || stdout.trim() || "Python worker bad output").slice(0, 500);
+}
+
+function runPythonWorker<T>(
+  workerPath: string,
+  payload: unknown,
+  timeoutMs: number,
+  parseOutput: (stdout: string) => T,
+  failureValue: (error: string) => T
+): Promise<T> {
+  const commands = pythonCommandCandidates();
+
+  return new Promise((resolve) => {
+    const tryCommand = (index: number) => {
+      const pythonCmd = commands[index];
+      let proc: ReturnType<typeof spawn>;
+      try {
+        proc = spawn(pythonCmd, [workerPath], { stdio: ["pipe", "pipe", "pipe"] });
+      } catch (error) {
+        if (index + 1 < commands.length) {
+          tryCommand(index + 1);
+          return;
+        }
+        const message = error instanceof Error ? error.message : String(error);
+        resolve(failureValue(`Failed to spawn Python (${commands.join(", ")}): ${message}`));
+        return;
+      }
+
+      let settled = false;
+      let stdout = "";
+      let stderr = "";
+      proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
+      proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
+
+      const timer = setTimeout(() => {
+        settled = true;
+        proc.kill();
+        resolve(failureValue("Python worker timed out"));
+      }, timeoutMs);
+
+      proc.once("error", (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (index + 1 < commands.length) {
+          tryCommand(index + 1);
+          return;
+        }
+        resolve(failureValue(`Failed to spawn Python (${commands.join(", ")}): ${error.message}`));
+      });
+
+      proc.once("close", () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try {
+          resolve(parseOutput(stdout.trim()));
+        } catch {
+          resolve(failureValue(workerOutputError(stderr, stdout)));
+        }
+      });
+
+      proc.stdin?.write(JSON.stringify(payload));
+      proc.stdin?.end();
+    };
+
+    tryCommand(0);
+  });
+}
+
 /** Call the Python worker in bulk mode — one subprocess for all wallets. */
 function checkEligibilityViaPythonBulk(
   slug: string,
@@ -42,40 +120,19 @@ function checkEligibilityViaPythonBulk(
   workerPath: string,
   timeoutMs = 120_000,
 ): Promise<PyWalletResult[]> {
-  return new Promise((resolve) => {
-    const pythonCmd = process.env.PYTHON_CMD ?? "python3";
-    let proc: ReturnType<typeof spawn>;
-    try {
-      proc = spawn(pythonCmd, [workerPath], { stdio: ["pipe", "pipe", "pipe"] });
-    } catch {
-      resolve(wallets.map((w) => ({ address: w.address, eligible: false, stages: [], error: "Failed to spawn Python" })));
-      return;
-    }
-    let stdout = "";
-    let stderr = "";
-    proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
-    const timer = setTimeout(() => {
-      proc.kill();
-      resolve(wallets.map((w) => ({ address: w.address, eligible: false, stages: [], error: "Python worker timed out" })));
-    }, timeoutMs);
-    proc.on("close", () => {
-      clearTimeout(timer);
-      try {
-        const parsed = JSON.parse(stdout.trim());
-        resolve(parsed.results ?? []);
-      } catch {
-        const err = stderr.slice(0, 300) || "Python worker bad output";
-        resolve(wallets.map((w) => ({ address: w.address, eligible: false, stages: [], error: err })));
-      }
-    });
-    // Proxies from env (comma-separated list) or empty
-    const proxies = process.env.ELIGIBILITY_PROXIES
-      ? process.env.ELIGIBILITY_PROXIES.split(",").map((p) => p.trim()).filter(Boolean)
-      : [];
-    proc.stdin?.write(JSON.stringify({ slug, wallets, threads: 3, delay: 1.5, proxies }));
-    proc.stdin?.end();
-  });
+  const proxies = process.env.ELIGIBILITY_PROXIES
+    ? process.env.ELIGIBILITY_PROXIES.split(",").map((p) => p.trim()).filter(Boolean)
+    : [];
+  return runPythonWorker(
+    workerPath,
+    { slug, wallets, threads: 3, delay: 1.5, proxies },
+    timeoutMs,
+    (stdout) => {
+      const parsed = JSON.parse(stdout);
+      return Array.isArray(parsed.results) ? parsed.results : [];
+    },
+    (error) => wallets.map((w) => ({ address: w.address, eligible: false, stages: [], error }))
+  );
 }
 
 /** Legacy single-wallet call — kept for fallback compatibility. */
@@ -84,34 +141,13 @@ function checkEligibilityViaPython(
   privkey: string,
   workerPath: string
 ): Promise<{ eligible: boolean; stages: string[]; error: string | null }> {
-  return new Promise((resolve) => {
-    const pythonCmd = process.env.PYTHON_CMD ?? "python3";
-    let proc: ReturnType<typeof spawn>;
-    try {
-      proc = spawn(pythonCmd, [workerPath], { stdio: ["pipe", "pipe", "pipe"] });
-    } catch {
-      resolve({ eligible: false, stages: [], error: "Failed to spawn Python" });
-      return;
-    }
-    let stdout = "";
-    let stderr = "";
-    proc.stdout?.on("data", (d: Buffer) => { stdout += d.toString(); });
-    proc.stderr?.on("data", (d: Buffer) => { stderr += d.toString(); });
-    const timer = setTimeout(() => {
-      proc.kill();
-      resolve({ eligible: false, stages: [], error: "Python worker timed out" });
-    }, 30_000);
-    proc.on("close", () => {
-      clearTimeout(timer);
-      try {
-        resolve(JSON.parse(stdout.trim()));
-      } catch {
-        resolve({ eligible: false, stages: [], error: stderr.slice(0, 300) || "Python worker bad output" });
-      }
-    });
-    proc.stdin?.write(JSON.stringify({ slug, privkey }));
-    proc.stdin?.end();
-  });
+  return runPythonWorker(
+    workerPath,
+    { slug, privkey },
+    30_000,
+    (stdout) => JSON.parse(stdout),
+    (error) => ({ eligible: false, stages: [], error })
+  );
 }
 
 const PYTHON_WORKER_PATH = findPythonWorker();

@@ -18,8 +18,15 @@ import json
 import asyncio
 import random
 from datetime import datetime, timezone
-from eth_account import Account
-from eth_account.messages import encode_defunct
+
+try:
+    from eth_account import Account
+    from eth_account.messages import encode_defunct
+    ETH_ACCOUNT_IMPORT_ERROR = None
+except ImportError as exc:
+    Account = None
+    encode_defunct = None
+    ETH_ACCOUNT_IMPORT_ERROR = str(exc)
 
 try:
     from curl_cffi.requests import AsyncSession
@@ -56,6 +63,8 @@ def build_proxy_config(proxy_str: str):
 
 async def check_one(slug: str, address: str, privkey: str, proxy_config) -> dict:
     """Check eligibility for a single wallet."""
+    if Account is None or encode_defunct is None:
+        return {"address": address, "eligible": False, "stages": [], "error": f"eth_account not installed: {ETH_ACCOUNT_IMPORT_ERROR}"}
     if AsyncSession is None:
         return {"address": address, "eligible": False, "stages": [], "error": "curl_cffi not installed"}
 
