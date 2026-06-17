@@ -250,7 +250,17 @@ fragment currencyIdentifier on ContractIdentifier {
                     stage_type = normalize_stage_type(s.get("stageType", "UNKNOWN"))
                     stage_idx = s.get("stageIndex")
                     name = f"{stage_type}#{stage_idx}" if stage_idx is not None else stage_type
-                    eligible_stages.append(name)
+                    max_mint = s.get("eligibleMaxTotalMintableByWallet") or s.get("maxTotalMintableByWallet") or 0
+                    try:
+                        max_mint = int(max_mint)
+                    except Exception:
+                        max_mint = 0
+                    eligible_stages.append({
+                        "stage": name,
+                        "stageType": stage_type,
+                        "stageIndex": stage_idx,
+                        "maxMint": max_mint,
+                    })
 
             return {
                 "address": address,

@@ -99,7 +99,7 @@ interface WhitelistCheckerResult {
   wallets: WhitelistCheckerWallet[];
 }
 
-type WalletEligibilityStatus = "checking" | "eligible" | "not_eligible";
+type WalletEligibilityStatus = "checking" | "eligible" | "not_eligible" | "error";
 
 function formatEth(wei: string) {
   try {
@@ -298,6 +298,10 @@ function MintSetupContent() {
         if (cancelled) return;
         const next = new Map<string, WalletEligibilityStatus>();
         for (const wallet of data.wallets) {
+          if (wallet.error) {
+            next.set(wallet.walletId, "error");
+            continue;
+          }
           const eligibleForPhase = wallet.stages.some((stage) => stageMatchesPhase(stage, phaseType));
           next.set(wallet.walletId, eligibleForPhase ? "eligible" : "not_eligible");
         }
@@ -308,7 +312,7 @@ function MintSetupContent() {
       })
       .catch(() => {
         if (!cancelled) {
-          setWalletEligibility(new Map(walletIds.map((id) => [id, "not_eligible"])));
+          setWalletEligibility(new Map(walletIds.map((id) => [id, "error"])));
         }
       });
 
@@ -823,6 +827,13 @@ function MintSetupContent() {
                               return (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-status-green-text">
                                   <CheckCircle2 size={11} /> Eligible
+                                </span>
+                              );
+                            }
+                            if (status === "error") {
+                              return (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-status-yellow-text">
+                                  <AlertTriangle size={11} /> Check failed
                                 </span>
                               );
                             }
