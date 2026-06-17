@@ -32,6 +32,7 @@ import { TransactionsModule } from "./domains/transactions.module.js";
 import { UsersModule } from "./domains/users.module.js";
 import { WalletHealthModule } from "./domains/wallet-health.module.js";
 import { WalletsModule } from "./domains/wallets.module.js";
+import { WhitelistCheckerModule } from "./domains/whitelist-checker.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { DirectMintModule } from "./domains/direct-mint.module.js";
 import { TraderTrackerModule } from "./domains/trader-tracker.module.js";
@@ -46,6 +47,7 @@ import { TraderTrackerModule } from "./domains/trader-tracker.module.js";
     AuthModule,
     UsersModule,
     WalletsModule,
+    WhitelistCheckerModule,
     CollectionsModule,
     OpenSeaModule,
     WalletHealthModule,

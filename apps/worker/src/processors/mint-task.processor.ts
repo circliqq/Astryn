@@ -473,9 +473,8 @@ export async function executeMintTask(
 
           const readiness = calculateReadinessScore({
             walletFunded: balanceWei > payload.value + gasEstimate.totalCostWei,
-            // Eligibility pre-checks are intentionally disabled. OpenSea can
-            // return false negatives for upcoming WL/GTD phases; the actual
-            // mint payload/proof resolution remains the execution authority.
+            // Whitelist checks live in the standalone Whitelist Checker page.
+            // Mint execution uses payload resolution as the authority.
             eligible: true,
             simulationPassed: !simulationFailed,
             gasUnderCap: gasEstimate.underCap,

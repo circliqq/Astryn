@@ -14,6 +14,7 @@ import {
   Repeat2,
   Shield,
   WalletCards,
+  XCircle,
   Zap,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -79,6 +80,27 @@ interface Collection {
 }
 
 type ExtendedGasMode = GasMode | "advanced";
+
+interface WhitelistCheckerStage {
+  stage: string;
+  stageType: string;
+  stageIndex: number | null;
+  maxMint: number;
+}
+
+interface WhitelistCheckerWallet {
+  walletId: string;
+  eligible: boolean;
+  stages: WhitelistCheckerStage[];
+  error: string | null;
+}
+
+interface WhitelistCheckerResult {
+  wallets: WhitelistCheckerWallet[];
+}
+
+type WalletEligibilityStatus = "checking" | "eligible" | "not_eligible";
+
 function formatEth(wei: string) {
   try {
     return `${(Number(BigInt(wei)) / 1e18).toFixed(4)} ETH`;
@@ -159,6 +181,7 @@ function MintSetupContent() {
   // ── Phase name overrides (user can manually type real names) ─────────────
   const [phaseNameOverrides, setPhaseNameOverrides] = useState<Record<string, string>>({});
   const [editingPhaseName, setEditingPhaseName] = useState<string | null>(null);
+  const [walletEligibility, setWalletEligibility] = useState<Map<string, WalletEligibilityStatus>>(new Map());
 
 
   // ── Instant Flipper state ─────────────────────────────────────────────────
@@ -221,6 +244,22 @@ function MintSetupContent() {
   // operates on the 4-value enum.
   const phaseType: CollectionPhase["phaseType"] = selectedPhase?.phaseType ?? "PUBLIC";
 
+  function stageMatchesPhase(stage: WhitelistCheckerStage, selected: CollectionPhase["phaseType"]) {
+    if (selected === "PUBLIC") return true;
+    const stageText = `${stage.stage} ${stage.stageType}`.toUpperCase();
+    if (selected === "GTD") return stageText.includes("GTD") || stageText.includes("GUARANTEED");
+    if (selected === "FCFS") return stageText.includes("FCFS");
+    if (selected === "ALLOWLIST") {
+      return (
+        stageText.includes("ALLOWLIST") ||
+        stageText.includes("PRESALE") ||
+        stageText.includes("PRE_SALE") ||
+        stageText.includes("PRIVATE")
+      );
+    }
+    return false;
+  }
+
   // Initialise / repair the selection whenever the collection (and its phases) load.
   useEffect(() => {
     if (!collection || collection.phases.length === 0) return;
@@ -231,6 +270,52 @@ function MintSetupContent() {
       setSelectedPhaseId(fallback?.id ?? null);
     }
   }, [collection, selectedPhaseId]);
+
+  useEffect(() => {
+    if (!collection || compatibleWallets.length === 0) {
+      setWalletEligibility(new Map());
+      return;
+    }
+
+    if (phaseType === "PUBLIC") {
+      setWalletEligibility(new Map(compatibleWallets.map((wallet) => [wallet.id, "eligible"])));
+      return;
+    }
+
+    const walletIds = compatibleWallets.map((wallet) => wallet.id);
+    let cancelled = false;
+    setWalletEligibility(new Map(walletIds.map((id) => [id, "checking"])));
+
+    apiFetch<WhitelistCheckerResult>("/whitelist-checker/bulk", {
+      method: "POST",
+      body: JSON.stringify({
+        collection: collection.slug,
+        walletIds,
+        network: collection.chain.toLowerCase(),
+      }),
+    })
+      .then((data) => {
+        if (cancelled) return;
+        const next = new Map<string, WalletEligibilityStatus>();
+        for (const wallet of data.wallets) {
+          const eligibleForPhase = wallet.stages.some((stage) => stageMatchesPhase(stage, phaseType));
+          next.set(wallet.walletId, eligibleForPhase ? "eligible" : "not_eligible");
+        }
+        for (const id of walletIds) {
+          if (!next.has(id)) next.set(id, "not_eligible");
+        }
+        setWalletEligibility(next);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWalletEligibility(new Map(walletIds.map((id) => [id, "not_eligible"])));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [collection, compatibleWallets, phaseType]);
 
   // ── Gas simulation — fires when collection + at least one wallet is ready ────
   // Uses the first selected wallet (or first compatible wallet) to call
@@ -729,7 +814,24 @@ function MintSetupContent() {
 
                         {/* Status row */}
                         <div className="mt-2.5 flex items-center justify-between gap-2">
-                          <span className="text-[10px] text-graphite-500">Ready for setup</span>
+                          {(() => {
+                            const status = walletEligibility.get(wallet.id);
+                            if (status === "checking") {
+                              return <span className="text-[10px] text-graphite-500">Checking...</span>;
+                            }
+                            if (status === "eligible") {
+                              return (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-status-green-text">
+                                  <CheckCircle2 size={11} /> Eligible
+                                </span>
+                              );
+                            }
+                              return (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-status-red-text">
+                                <XCircle size={11} /> Not eligible
+                              </span>
+                            );
+                          })()}
                           <span className={`text-[10px] font-semibold ${selected ? "text-brand" : "text-graphite-500"}`}>
                             {selected ? "✓ Selected" : wallet.status}
                           </span>

@@ -44,6 +44,18 @@ export interface EligibilityResult {
   payload?: MintPayload;
 }
 
+export interface DropEligibilityStage {
+  stage: string;
+  stageType: string;
+  stageIndex: number | null;
+  maxMint: number;
+}
+
+export interface DropEligibilityStagesResult {
+  address: string;
+  stages: DropEligibilityStage[];
+}
+
 export interface MintPayload {
   to: `0x${string}`;
   data: `0x${string}`;
@@ -687,6 +699,213 @@ export class OpenSeaClient {
       method: "POST",
       body: JSON.stringify({ parameters, signature }),
     });
+  }
+
+  async checkDropEligibilityStages(
+    slug: string,
+    walletAddress: string,
+    signMessage: (message: string) => Promise<string>
+  ): Promise<DropEligibilityStagesResult> {
+    const UA =
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+    const cookies = new Map<string, string>();
+    const cookieHeader = () => [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+    const storeCookies = (res: Response) => {
+      const getSetCookie = (res.headers as unknown as { getSetCookie?: () => string[] }).getSetCookie;
+      const list = typeof getSetCookie === "function" ? getSetCookie.call(res.headers) : [];
+      for (const sc of list) {
+        const pair = sc.split(";")[0] ?? "";
+        const idx = pair.indexOf("=");
+        if (idx > 0) cookies.set(pair.slice(0, idx).trim(), pair.slice(idx + 1).trim());
+      }
+    };
+    const baseHeaders: Record<string, string> = {
+      accept: "application/json, text/plain, */*",
+      "accept-language": "en-US,en;q=0.9",
+      "accept-encoding": "gzip, deflate, br",
+      "user-agent": UA,
+      "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+      "sec-ch-ua-mobile": "?0",
+      "sec-ch-ua-platform": '"Windows"',
+      "sec-fetch-dest": "empty",
+      "sec-fetch-mode": "cors",
+      "sec-fetch-site": "same-origin",
+      origin: "https://opensea.io",
+      referer: "https://opensea.io/"
+    };
+
+    const send = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
+      const headers: Record<string, string> = { ...baseHeaders, ...(init?.headers ?? {}) };
+      if (cookies.size) headers.cookie = cookieHeader();
+      return this.fetchImpl(url, { method: init?.method ?? "GET", headers, body: init?.body }).then(async (res) => {
+        storeCookies(res);
+        return res;
+      });
+    };
+
+    await send("https://opensea.io");
+
+    const nonceRes = await send("https://opensea.io/__api/auth/siwe/nonce", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: ""
+    });
+    if (!nonceRes.ok) throw new Error(`OpenSea nonce request failed with ${nonceRes.status}.`);
+    const nonce = (await nonceRes.json().catch(() => null))?.nonce as string | undefined;
+    if (!nonce) throw new Error("OpenSea nonce response did not include a nonce.");
+
+    const issuedAt = new Date().toISOString();
+    const statement =
+      "Click to sign in and accept the OpenSea Terms of Service " +
+      "(https://opensea.io/tos) and Privacy Policy (https://opensea.io/privacy).";
+    const address = walletAddress;
+    const siweMessage =
+      `opensea.io wants you to sign in with your account:\n` +
+      `${address}\n\n` +
+      `${statement}\n\n` +
+      `URI: https://opensea.io/\n` +
+      `Version: 1\n` +
+      `Chain ID: 1\n` +
+      `Nonce: ${nonce}\n` +
+      `Issued At: ${issuedAt}`;
+    let signature = await signMessage(siweMessage);
+    if (!signature.startsWith("0x")) signature = `0x${signature}`;
+
+    const verifyRes = await send("https://opensea.io/__api/auth/siwe/verify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        chainArch: "EVM",
+        message: {
+          address,
+          chainId: "1",
+          domain: "opensea.io",
+          issuedAt,
+          nonce,
+          statement,
+          uri: "https://opensea.io/",
+          version: "1"
+        },
+        signature
+      })
+    });
+    if (!verifyRes.ok) throw new Error(`OpenSea SIWE verify failed with ${verifyRes.status}.`);
+
+    cookies.set("connected-account-server-hint", address.toLowerCase());
+    const query = `query DropEligibilityQuery($collectionSlug: String!, $address: Address!) {
+  dropBySlug(slug: $collectionSlug) {
+    __typename
+    ... on Erc721SeaDropV1 {
+      minterQuantityMinted(minter: $address)
+      __typename
+    }
+    stages {
+      stageType
+      stageIndex
+      isEligible
+      maxTotalMintableByWallet
+      eligibleMaxTotalMintableByWallet
+      eligiblePrice {
+        ...TokenPrice
+        ...UsdPrice
+        usd
+        token {
+          unit
+          symbol
+          contractAddress
+          chain {
+            identifier
+            __typename
+          }
+          __typename
+        }
+        __typename
+      }
+      ... on Erc1155SeaDropV2Stage {
+        fromTokenId
+        toTokenId
+        maxTotalMintableByWalletPerToken
+        eligibleMaxTotalMintableByWalletPerToken
+        __typename
+      }
+      __typename
+    }
+  }
+}
+fragment TokenPrice on Price {
+  usd
+  token {
+    unit
+    symbol
+    contractAddress
+    chain {
+      identifier
+      __typename
+    }
+    __typename
+  }
+  __typename
+}
+fragment UsdPrice on Price {
+  usd
+  token {
+    contractAddress
+    unit
+    ...currencyIdentifier
+    __typename
+  }
+  __typename
+}
+fragment currencyIdentifier on ContractIdentifier {
+  contractAddress
+  chain {
+    identifier
+    __typename
+  }
+  __typename
+}`;
+
+    const gqlRes = await send("https://gql.opensea.io/graphql", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "sec-fetch-site": "cross-site",
+        referer: "https://opensea.io/"
+      },
+      body: JSON.stringify({
+        operationName: "DropEligibilityQuery",
+        query,
+        variables: { address, collectionSlug: slug }
+      })
+    });
+    if (!gqlRes.ok) throw new Error(`OpenSea eligibility query failed with ${gqlRes.status}.`);
+    const json = (await gqlRes.json().catch(() => null)) as
+      | { data?: { dropBySlug?: { stages?: Array<Record<string, unknown>> } }; errors?: unknown }
+      | null;
+    if (!json) throw new Error("OpenSea eligibility response was not JSON.");
+    if (json.errors) throw new Error("OpenSea eligibility response included GraphQL errors.");
+    const drop = json.data?.dropBySlug;
+    if (!drop) throw new Error("OpenSea did not return drop data for this collection.");
+
+    const stages = Array.isArray(drop.stages) ? drop.stages : [];
+    return {
+      address,
+      stages: stages
+        .filter((stage) => Boolean(stage.isEligible) && stage.stageType !== "PUBLIC_SALE")
+        .map((stage) => {
+          const stageType = typeof stage.stageType === "string" ? stage.stageType : "STAGE";
+          const rawIndex = Number(stage.stageIndex);
+          const stageIndex = Number.isFinite(rawIndex) ? rawIndex : null;
+          const maxMint = Number(stage.eligibleMaxTotalMintableByWallet ?? 0);
+          return {
+            stage: stageIndex === null ? stageType : `${stageType}#${stageIndex}`,
+            stageType,
+            stageIndex,
+            maxMint: Number.isFinite(maxMint) ? maxMint : 0
+          };
+        })
+    };
   }
 
   async getMintPayload(
