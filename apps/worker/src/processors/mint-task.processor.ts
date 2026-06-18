@@ -128,6 +128,7 @@ interface PreparedMint {
 interface BroadcastedMint extends PreparedMint {
   transactionId: string;
   hash: Hex;
+  broadcastBlockNumber: bigint | null;
   // All tx hashes broadcast for this wallet (original + bumped) — tracked for multi-hash receipt.
   allHashes: Hex[];
 }
@@ -780,14 +781,25 @@ export async function executeMintTask(
               ).toString(),
             },
           });
+          const broadcastBlockNumber = await client.getBlockNumber().catch(() => null);
           await log(
             prisma,
             task.id,
             "info",
             `Broadcast accepted for wallet ${shortAddress(preparedMint.walletAddress)}.`,
-            { txHash: hash, elapsedMs: Date.now() - broadcastStartedAt },
+            {
+              txHash: hash,
+              elapsedMs: Date.now() - broadcastStartedAt,
+              broadcastBlockNumber: broadcastBlockNumber?.toString() ?? null,
+            },
           );
-          return { ...preparedMint, transactionId: tx.id, hash, allHashes: [hash] } satisfies BroadcastedMint;
+          return {
+            ...preparedMint,
+            transactionId: tx.id,
+            hash,
+            broadcastBlockNumber,
+            allHashes: [hash],
+          } satisfies BroadcastedMint;
         } catch (error) {
           await failWallet(
             prisma,
@@ -1082,6 +1094,27 @@ export async function executeMintTask(
           if (txStatus !== "CONFIRMED") {
             throw new Error("Transaction failed on-chain.");
           }
+          const firstBlockHit =
+            item.broadcastBlockNumber == null
+              ? null
+              : receipt.blockNumber <= item.broadcastBlockNumber + 1n;
+          await log(
+            prisma,
+            task.id,
+            "info",
+            `${shortAddress(item.walletAddress)}: mint confirmed in block ${receipt.blockNumber.toString()} — gas ${formatGwei(receipt.effectiveGasPrice)} gwei, used ${receipt.gasUsed.toLocaleString()}${firstBlockHit === null ? "" : firstBlockHit ? " — FIRST BLOCK HIT" : " — missed first block"}.`,
+            {
+              stage: "receipt",
+              walletId: item.walletId,
+              txHash: receipt.transactionHash,
+              blockNumber: receipt.blockNumber.toString(),
+              broadcastBlockNumber: item.broadcastBlockNumber?.toString() ?? null,
+              firstBlockHit,
+              gasUsed: receipt.gasUsed.toString(),
+              effectiveGasPriceWei: receipt.effectiveGasPrice.toString(),
+              effectiveGasPriceGwei: formatGwei(receipt.effectiveGasPrice),
+            },
+          );
           const tokenIds = extractTransferTokenIds(receipt.logs, item.walletAddress);
           return { status: "confirmed", tokenIds };
         } catch (error) {
@@ -2401,6 +2434,12 @@ function shortAddress(address: string) {
 
 function rawErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatGwei(wei: bigint): string {
+  const whole = wei / 1_000_000_000n;
+  const fraction = ((wei % 1_000_000_000n) / 10_000_000n).toString().padStart(2, "0");
+  return `${whole.toString()}.${fraction}`;
 }
 
 function isReceiptPending(error: unknown) {

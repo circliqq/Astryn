@@ -183,7 +183,11 @@ export async function processDirectMintJob(
 
       if (!txHash) throw new Error("All RPCs failed to broadcast the transaction.");
 
-      await taskLog("info", `${shortAddr}: broadcast OK — hash ${txHash}.`);
+      const broadcastBlockNumber = await publicClient.getBlockNumber().catch(() => null);
+      await taskLog(
+        "info",
+        `${shortAddr}: broadcast OK — hash ${txHash}${broadcastBlockNumber == null ? "" : ` from block ${broadcastBlockNumber.toString()}`}.`,
+      );
 
       await prisma.directMintTaskWallet.update({
         where: { id: taskWallet.id },
@@ -192,11 +196,18 @@ export async function processDirectMintJob(
 
       // Wait for receipt
       try {
-        await waitForReceipt({ chainName, rpcUrl: primaryRpc }, txHash, {
+        const receipt = await waitForReceipt({ chainName, rpcUrl: primaryRpc }, txHash, {
           confirmations: 1,
           timeoutMs: 120_000,
         });
-        await taskLog("info", `${shortAddr}: confirmed ✓`);
+        const firstBlockHit =
+          broadcastBlockNumber == null
+            ? null
+            : receipt.blockNumber <= broadcastBlockNumber + 1n;
+        await taskLog(
+          "info",
+          `${shortAddr}: mint confirmed in block ${receipt.blockNumber.toString()} — gas ${formatGwei(receipt.effectiveGasPrice)} gwei, used ${receipt.gasUsed.toLocaleString()}${firstBlockHit === null ? "" : firstBlockHit ? " — FIRST BLOCK HIT" : " — missed first block"}.`,
+        );
       } catch {
         await taskLog("warn", `${shortAddr}: receipt timeout — tx may still confirm later.`);
       }
@@ -294,4 +305,10 @@ function env(name: string): string {
 
 function rawError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatGwei(wei: bigint): string {
+  const whole = wei / 1_000_000_000n;
+  const fraction = ((wei % 1_000_000_000n) / 10_000_000n).toString().padStart(2, "0");
+  return `${whole.toString()}.${fraction}`;
 }
