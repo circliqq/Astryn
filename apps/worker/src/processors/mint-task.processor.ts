@@ -835,10 +835,27 @@ export async function executeMintTask(
 
     // Shared cancellation signal — flipped when supply = 0 detected.
     let supplyExhausted = false;
+    let lastSupplyMonitorBlock: bigint | null = null;
+    let previousSupply = baselineTotalSupply;
+    const monitorStartBlock = await client.getBlockNumber().catch(() => null);
+    await log(
+      prisma,
+      task.id,
+      "info",
+      `LIVE MONITOR ${task.collection.slug} — watching from block ${monitorStartBlock?.toString() ?? "unknown"}.`,
+      {
+        event: "monitor.start",
+        collectionSlug: task.collection.slug,
+        startBlock: monitorStartBlock?.toString() ?? null,
+        baselineSupply: baselineTotalSupply?.toString() ?? null,
+        maxSupply: knownMaxSupply?.toString() ?? null,
+      },
+    ).catch(() => undefined);
 
     const watchSupply = async () => {
       if (!supplyCheckEnabled) return;
       try {
+        const blockNumber = await client.getBlockNumber().catch(() => null);
         const totalSupply = await (
           client.readContract({
             address: contractAddress,
@@ -864,8 +881,40 @@ export async function executeMintTask(
               ) as Promise<bigint | null>
             );
 
+        if (blockNumber != null && blockNumber !== lastSupplyMonitorBlock) {
+          const mintedThisBlock =
+            previousSupply == null || totalSupply < previousSupply
+              ? null
+              : totalSupply - previousSupply;
+          lastSupplyMonitorBlock = blockNumber;
+          previousSupply = totalSupply;
+          await log(
+            prisma,
+            task.id,
+            "info",
+            `Block ${blockNumber.toString()} — ${mintedThisBlock?.toString() ?? "?"} minted this block — total ${totalSupply.toString()}${maxSupply == null ? "" : `/${maxSupply.toString()}`}.`,
+            {
+              event: "monitor.block",
+              blockNumber: blockNumber.toString(),
+              mintedThisBlock: mintedThisBlock?.toString() ?? null,
+              totalSupply: totalSupply.toString(),
+              maxSupply: maxSupply?.toString() ?? null,
+              soldOut: maxSupply != null && totalSupply >= maxSupply,
+            },
+          );
+        }
+
         if (maxSupply != null && totalSupply >= maxSupply) {
           supplyExhausted = true;
+          void log(prisma, task.id, "warn",
+            `MINT MONITOR done ${task.collection.slug} — sold out ${totalSupply}/${maxSupply}.`,
+            {
+              event: "monitor.soldOut",
+              totalSupply: totalSupply.toString(),
+              maxSupply: maxSupply.toString(),
+              blockNumber: blockNumber?.toString() ?? null,
+            },
+          ).catch(() => undefined);
           void log(prisma, task.id, "warn",
             `Supply exhausted on-chain (${totalSupply}/${maxSupply}) — cancelling pending mint txs to save gas.`,
           ).catch(() => undefined);
