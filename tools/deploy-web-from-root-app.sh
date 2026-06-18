@@ -8,6 +8,8 @@ FILES_TO_COPY=(
   "apps/web/src/app/logs/page.tsx"
   "apps/worker/src/processors/mint-task.processor.ts"
   "apps/worker/src/processors/direct-mint.processor.ts"
+  "packages/blockchain/src/index.ts"
+  "packages/rpc-pool/src/index.ts"
 )
 
 echo "Pulling latest main in ${SOURCE_REPO}..."

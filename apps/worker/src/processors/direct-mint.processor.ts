@@ -61,7 +61,7 @@ export async function processDirectMintJob(
   const network = task.chain === "BASE" ? "base" : "ethereum";
   const chainName = network as "base" | "ethereum";
   const rpcUrls = rpcUrlsFor(chainName);
-  const primaryRpc = rpcUrls[0];
+  const primaryRpc = await fastestRpcUrl(chainName, rpcUrls);
 
   if (!primaryRpc) {
     await markFailed(prisma, taskId, "No RPC URL configured for " + network);
@@ -170,9 +170,10 @@ export async function processDirectMintJob(
 
       await taskLog("info", `${shortAddr}: tx signed — broadcasting.`);
 
-      // Broadcast to all RPCs
+      // Broadcast to the fastest RPC first, then fall back to the remaining RPCs.
       let txHash: `0x${string}` | undefined;
-      for (const rpcUrl of rpcUrls) {
+      const broadcastUrls = [primaryRpc, ...rpcUrls.filter((url) => url !== primaryRpc)];
+      for (const rpcUrl of broadcastUrls) {
         try {
           txHash = await sendRawTransaction({ chainName, rpcUrl, timeoutMs: 3_000 }, signedTx);
           break;
@@ -305,6 +306,26 @@ function env(name: string): string {
 
 function rawError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function fastestRpcUrl(chainName: "base" | "ethereum", urls: string[]) {
+  if (urls.length <= 1) return urls[0];
+  const checks = await Promise.all(
+    urls.map(async (url) => {
+      const started = Date.now();
+      try {
+        await Promise.race([
+          createMintPublicClient({ chainName, rpcUrl: url }).getBlockNumber(),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), 450)),
+        ]);
+        return { url, latencyMs: Date.now() - started };
+      } catch {
+        return { url, latencyMs: Infinity };
+      }
+    }),
+  );
+  checks.sort((a, b) => a.latencyMs - b.latencyMs);
+  return checks[0]?.latencyMs === Infinity ? urls[0] : checks[0]?.url ?? urls[0];
 }
 
 function formatGwei(wei: bigint): string {

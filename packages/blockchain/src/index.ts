@@ -31,6 +31,8 @@ export interface WaitForReceiptOptions {
   timeoutMs?: number;
 }
 
+const rawTxClientCache = new Map<string, ReturnType<typeof createPublicClient>>();
+
 export type MintTransactionRequest = TransactionRequest & {
   account?: Address;
 };
@@ -497,13 +499,20 @@ export async function signTransaction(
 
 export async function sendRawTransaction(options: SendRawTransactionOptions, serializedTransaction: Hex) {
   assertMainnetTransactionsEnabled(options.chainName, "transaction broadcast");
-  return createPublicClient({
-    chain: chainByName(options.chainName),
-    transport: http(options.rpcUrl, {
-      retryCount: 0,
-      timeout: "timeoutMs" in options && options.timeoutMs ? options.timeoutMs : 2_500
-    })
-  }).sendRawTransaction({ serializedTransaction });
+  const timeoutMs = "timeoutMs" in options && options.timeoutMs ? options.timeoutMs : 2_500;
+  const cacheKey = `${options.chainName}:${options.rpcUrl}:${timeoutMs}`;
+  let client = rawTxClientCache.get(cacheKey);
+  if (!client) {
+    client = createPublicClient({
+      chain: chainByName(options.chainName),
+      transport: http(options.rpcUrl, {
+        retryCount: 0,
+        timeout: timeoutMs
+      })
+    });
+    rawTxClientCache.set(cacheKey, client);
+  }
+  return client.sendRawTransaction({ serializedTransaction });
 }
 
 function assertMainnetTransactionsEnabled(chainName: ChainName, action: string) {

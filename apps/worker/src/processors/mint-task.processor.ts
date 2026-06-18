@@ -268,8 +268,11 @@ export async function executeMintTask(
       ? Promise.resolve(null)
       : openSea.getCollectionStats(task.collection.slug).catch(() => null);
 
-    const healthResults = await (isImmediate ? pool.checkPrimary(network) : pool.checkAll(network));
-    const primary = pool.selectPrimary(network);
+    const healthResults = await pool.checkAll(
+      network,
+      isImmediate ? numberEnv("MINT_FAST_RPC_CHECK_TIMEOUT_MS", 450) : 1_500,
+    );
+    const primary = pool.selectFastest(network);
     // Measured ping of the selected primary — used to derive dynamic refresh lead.
     const primaryLatencyMs = healthResults.find((h) => h.endpointId === primary.id)?.latencyMs ?? null;
     const client = createMintPublicClient({
@@ -280,7 +283,7 @@ export async function executeMintTask(
       prisma,
       task.id,
       "info",
-      `Selected ${primary.name} RPC for preflight, signing, and receipts.`,
+      `Selected fastest RPC for mint tx: ${primary.name}${primaryLatencyMs == null ? "" : ` (${primaryLatencyMs}ms)`}.`,
     );
 
     // Fetch gas + await market stats in parallel.
@@ -690,7 +693,7 @@ export async function executeMintTask(
           }).catch(() => undefined);
 
           const [broadcasts] = await Promise.all([
-            pool.broadcastUntilAccepted(network, preparedMint.signedTx),
+            broadcastMintTransaction(pool, network, preparedMint.signedTx),
             // Flashbots bundle — targets N+1/N+2/N+3 specifically (ETH only).
             // minTimestamp = phase open unix seconds → bundle won't land before the drop opens.
             isEthereum && flashbotsAuthKey && currentBlockNumber != null
@@ -1066,7 +1069,7 @@ export async function executeMintTask(
 
                 // Rebroadcast bumped tx to all channels in parallel.
                 const [bumpBroadcasts] = await Promise.all([
-                  pool.broadcastUntilAccepted(network, bumpedSignedTx),
+                  broadcastMintTransaction(pool, network, bumpedSignedTx),
                   network === "ethereum" && process.env["ETH_BUILDERS_ENABLED"]
                     ? sendToFreeBuilders(bumpedSignedTx).catch(() => undefined)
                     : Promise.resolve(),
@@ -2493,6 +2496,13 @@ function formatGwei(wei: bigint): string {
 
 function isReceiptPending(error: unknown) {
   return /timeout|timed out|not found|could not find/i.test(rawErrorMessage(error));
+}
+
+async function broadcastMintTransaction(pool: RpcPool, network: "base" | "ethereum", signedTx: Hex) {
+  const mode = (process.env["MINT_BROADCAST_RPC_MODE"] ?? "fastest").toLowerCase();
+  return mode === "parallel"
+    ? pool.broadcastUntilAccepted(network, signedTx)
+    : pool.broadcastFastestUntilAccepted(network, signedTx);
 }
 
 function delay(ms: number) {

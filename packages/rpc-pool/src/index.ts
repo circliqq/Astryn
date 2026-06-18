@@ -69,9 +69,9 @@ export class RpcPool {
     }
   }
 
-  async checkAll(chainName?: ChainName): Promise<RpcHealth[]> {
+  async checkAll(chainName?: ChainName, timeoutMs = 1_500): Promise<RpcHealth[]> {
     const endpoints = chainName ? this.endpointsFor(chainName) : this.endpoints;
-    return Promise.all(endpoints.map((endpoint) => this.checkEndpoint(endpoint)));
+    return Promise.all(endpoints.map((endpoint) => this.checkEndpoint(endpoint, timeoutMs)));
   }
 
   // Fast check: only ping the primary (first) endpoint. Used for immediate tasks
@@ -83,6 +83,10 @@ export class RpcPool {
   }
 
   selectPrimary(chainName: ChainName): RpcEndpointConfig {
+    return this.selectFastest(chainName);
+  }
+
+  selectFastest(chainName: ChainName): RpcEndpointConfig {
     const endpoints = this.endpointsFor(chainName);
     // Select the healthy endpoint with the lowest latency (latency-first routing)
     const healthyEndpoints = endpoints.filter(
@@ -94,6 +98,17 @@ export class RpcPool {
       return la - lb;
     });
     return healthyEndpoints[0] ?? endpoints[0];
+  }
+
+  sortedByLatency(chainName: ChainName): RpcEndpointConfig[] {
+    return this.endpointsFor(chainName).sort((a, b) => {
+      const ah = this.health.get(a.id);
+      const bh = this.health.get(b.id);
+      const aScore = ah?.status === "healthy" ? ah.latencyMs ?? Infinity : Infinity;
+      const bScore = bh?.status === "healthy" ? bh.latencyMs ?? Infinity : Infinity;
+      if (aScore !== bScore) return aScore - bScore;
+      return a.priority - b.priority;
+    });
   }
 
   async parallelBroadcast(chainName: ChainName, serializedTransaction: Hex): Promise<BroadcastResult[]> {
@@ -130,6 +145,17 @@ export class RpcPool {
         void this.broadcastToEndpoint(endpoint, serializedTransaction).then(settle);
       }
     });
+  }
+
+  async broadcastFastestUntilAccepted(chainName: ChainName, serializedTransaction: Hex): Promise<BroadcastResult[]> {
+    const endpoints = this.sortedByLatency(chainName);
+    const results: BroadcastResult[] = [];
+    for (const endpoint of endpoints) {
+      const result = await this.broadcastToEndpoint(endpoint, serializedTransaction);
+      results.push(result);
+      if (result.ok && result.hash) break;
+    }
+    return results;
   }
 
   // Derive a broadcast timeout for a specific endpoint.
