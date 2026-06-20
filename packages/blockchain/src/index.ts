@@ -736,3 +736,190 @@ export async function fetchContractAbi(
 
   return { abi: fallbackAbi, source: "selector-fallback", verified: false };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EIP-7702 Atomic Bundle Mint
+// Sub-wallets delegate (7702 authorization) to the BundleMint7702 executor;
+// the main/sponsor wallet sends ONE type-4 tx that mints from all of them.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** ABI of the BundleMint7702 reference executor (contracts/BundleMint7702.sol). */
+export const BUNDLE_MINT_7702_ABI = [
+  {
+    type: "function",
+    name: "orchestrateSeaDrop",
+    stateMutability: "payable",
+    inputs: [
+      { name: "minters", type: "address[]" },
+      { name: "seadrop", type: "address" },
+      { name: "nft", type: "address" },
+      { name: "feeRecipient", type: "address" },
+      { name: "quantity", type: "uint256" },
+      { name: "pricePerMint", type: "uint256" },
+      { name: "payFromSender", type: "bool" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "orchestrateCall",
+    stateMutability: "payable",
+    inputs: [
+      { name: "minters", type: "address[]" },
+      { name: "target", type: "address" },
+      { name: "perMinterValue", type: "uint256" },
+      { name: "data", type: "bytes" },
+      { name: "payFromSender", type: "bool" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
+    name: "setRelayer",
+    stateMutability: "nonpayable",
+    inputs: [{ name: "next", type: "address" }],
+    outputs: [],
+  },
+] as const;
+
+export interface BundleSeaDropParams {
+  minters: Address[];
+  seaDropAddress?: Address;
+  nftContract: Address;
+  feeRecipient?: Address;
+  quantity: number | bigint;
+  pricePerMintWei: bigint | string;
+  /** true = relayer/tx-sender pays mint ETH; false = each sub-wallet self-funds. */
+  payFromSender: boolean;
+}
+
+export interface BundleCallParams {
+  minters: Address[];
+  target: Address;
+  perMinterValueWei: bigint | string;
+  data: Hex;
+  payFromSender: boolean;
+}
+
+/** Build calldata for orchestrateSeaDrop on the executor. */
+export function buildOrchestrateSeaDropCalldata(params: BundleSeaDropParams): {
+  data: Hex;
+  totalValue: bigint;
+} {
+  const quantity = BigInt(params.quantity);
+  if (quantity <= 0n) throw new Error("Quantity must be greater than zero.");
+  const pricePerMint = BigInt(params.pricePerMintWei);
+  const perMinter = pricePerMint * quantity;
+  const minters = params.minters.map((m) => getAddress(m));
+
+  const data = encodeFunctionData({
+    abi: BUNDLE_MINT_7702_ABI,
+    functionName: "orchestrateSeaDrop",
+    args: [
+      minters,
+      getAddress(params.seaDropAddress ?? SEA_DROP_ADDRESS),
+      getAddress(params.nftContract),
+      getAddress(params.feeRecipient ?? OPENSEA_FEE_RECIPIENT),
+      quantity,
+      pricePerMint,
+      params.payFromSender,
+    ],
+  });
+
+  // When sub-wallets self-fund, the sponsor tx carries no value.
+  const totalValue = params.payFromSender ? perMinter * BigInt(minters.length) : 0n;
+  return { data, totalValue };
+}
+
+/** Build calldata for orchestrateCall on the executor (generic mint). */
+export function buildOrchestrateCallCalldata(params: BundleCallParams): {
+  data: Hex;
+  totalValue: bigint;
+} {
+  const perMinter = BigInt(params.perMinterValueWei);
+  const minters = params.minters.map((m) => getAddress(m));
+
+  const data = encodeFunctionData({
+    abi: BUNDLE_MINT_7702_ABI,
+    functionName: "orchestrateCall",
+    args: [minters, getAddress(params.target), perMinter, params.data, params.payFromSender],
+  });
+
+  const totalValue = params.payFromSender ? perMinter * BigInt(minters.length) : 0n;
+  return { data, totalValue };
+}
+
+/**
+ * Sign a 7702 authorization for one sub-wallet, delegating its EOA to the
+ * executor contract. The authorization nonce defaults to the sub-wallet's
+ * current account nonce (it sends no tx of its own in a sponsored flow).
+ */
+export async function signMintAuthorization(
+  options: BlockchainClientOptions,
+  privateKey: Hex,
+  executorAddress: Address,
+  nonce?: number,
+) {
+  assertMainnetTransactionsEnabled(options.chainName, "7702 authorization");
+  const account = privateKeyToAccount(privateKey);
+  const chainId = chainByName(options.chainName).id;
+
+  let authNonce = nonce;
+  if (authNonce === undefined) {
+    const client = createMintPublicClient(options);
+    authNonce = await client.getTransactionCount({
+      address: account.address,
+      blockTag: "pending",
+    });
+  }
+
+  // viem renamed `contractAddress` → `address` for the authorization target;
+  // pass both so this works across 2.2x–2.4x. The extra key is ignored.
+  return account.signAuthorization({
+    contractAddress: getAddress(executorAddress),
+    address: getAddress(executorAddress),
+    chainId,
+    nonce: authNonce,
+  } as unknown as { contractAddress: Address; chainId: number; nonce: number });
+}
+
+export interface Sponsored7702Request {
+  to: Address;
+  data: Hex;
+  value: bigint;
+  gas?: bigint;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  authorizationList: any[];
+}
+
+/**
+ * Send the sponsor's single EIP-7702 (type-4) transaction carrying every
+ * sub-wallet authorization. Returns the transaction hash.
+ */
+export async function sendSponsored7702Transaction(
+  options: BlockchainClientOptions,
+  sponsorPrivateKey: Hex,
+  request: Sponsored7702Request,
+): Promise<Hex> {
+  assertMainnetTransactionsEnabled(options.chainName, "7702 sponsored transaction");
+  const account = privateKeyToAccount(sponsorPrivateKey);
+  const walletClient = createWalletClient({
+    account,
+    chain: chainByName(options.chainName),
+    transport: http(options.rpcUrl, { retryCount: 0 }),
+  });
+
+  // viem auto-selects type "eip7702" when authorizationList is present.
+  return walletClient.sendTransaction({
+    to: request.to,
+    data: request.data,
+    value: request.value,
+    gas: request.gas,
+    maxFeePerGas: request.maxFeePerGas,
+    maxPriorityFeePerGas: request.maxPriorityFeePerGas,
+    authorizationList: request.authorizationList,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  } as any);
+}

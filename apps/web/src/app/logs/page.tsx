@@ -53,10 +53,10 @@ const STEPS = [
   { label: "Scheduled", keys: ["Pre-arming", "Starting immediate", "Target broadcast"] },
   { label: "Preflight", keys: ["RPC health", "Pre-flight passed", "Selected"] },
   { label: "Simulation", keys: ["Simulation", "simulation"] },
-  { label: "Signing", keys: ["signed and ready", "Preparing wallet"] },
-  { label: "Broadcasting", keys: ["Broadcasting", "Broadcast accepted", "submitted"] },
+  { label: "Signing", keys: ["SIGN READY", "signed and ready", "Preparing wallet"] },
+  { label: "Broadcasting", keys: ["DIRECT BROADCAST", "Broadcasting", "Broadcast accepted", "submitted"] },
   { label: "Pending", keys: ["PENDING", "receipt timeout", "pending"] },
-  { label: "Confirming", keys: ["mint confirmed in block", "confirmed on-chain"] },
+  { label: "Confirming", keys: ["MINED", "mint confirmed in block", "confirmed on-chain"] },
   { label: "Completed", keys: ["Mint task confirmed", "COMPLETED", "sold out"] },
 ];
 
@@ -73,6 +73,9 @@ function ctxString(log: LogEntry, key: string) {
 
 function classifyLog(message: string, level: string) {
   const lower = message.toLowerCase();
+  if (/got calldata|sign ready/i.test(message)) return "monitor";
+  if (/direct broadcast|bundle submitted|private submitted|builders submitted|bdn submitted|base fast submitted|fired/i.test(message)) return "broadcast";
+  if (/^mined /i.test(message)) return "success";
   if (lower.includes("first block hit") || lower.includes("mint confirmed in block")) return "success";
   if (lower.includes("live monitor") || lower.startsWith("block ")) return "monitor";
   if (lower.includes("sold out") || lower.includes("supply exhausted")) return "soldout";

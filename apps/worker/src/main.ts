@@ -13,6 +13,7 @@ import { processFunding } from "./processors/funding.processor.js";
 import { processSniperWatch } from "./processors/sniper.processor.js";
 import { processNotification } from "./processors/notifications.processor.js";
 import { processDirectMintJob } from "./processors/direct-mint.processor.js";
+import { processBundleMintJob } from "./processors/bundle-mint.processor.js";
 
 const WORKER_HEARTBEAT_KEY = "mint-copilot:scheduler:worker-heartbeat";
 const WORKER_HEARTBEAT_INTERVAL_MS = 10_000;
@@ -64,6 +65,10 @@ const workers = [
     connection,
     concurrency: 2,
   }),
+  new Worker("bundle-mint-queue", (job) => processBundleMintJob(job, prisma), {
+    connection,
+    concurrency: 2,
+  }),
 ];
 
 for (const queueName of [
@@ -74,6 +79,7 @@ for (const queueName of [
   "sniper-queue",
   "notifications-queue",
   "direct-mint-queue",
+  "bundle-mint-queue",
 ]) {
   const events = new QueueEvents(queueName, { connection });
   events.on("failed", ({ jobId, failedReason }) =>

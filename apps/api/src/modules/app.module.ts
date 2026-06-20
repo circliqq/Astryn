@@ -35,6 +35,7 @@ import { WalletsModule } from "./domains/wallets.module.js";
 import { WhitelistCheckerModule } from "./domains/whitelist-checker.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { DirectMintModule } from "./domains/direct-mint.module.js";
+import { BundleMintModule } from "./domains/bundle-mint.module.js";
 import { TraderTrackerModule } from "./domains/trader-tracker.module.js";
 
 @Module({
@@ -75,6 +76,7 @@ import { TraderTrackerModule } from "./domains/trader-tracker.module.js";
     MintAlertsModule,
     SupportModule,
     DirectMintModule,
+    BundleMintModule,
     TraderTrackerModule,
   ]
 })

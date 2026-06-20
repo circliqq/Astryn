@@ -209,6 +209,7 @@ export async function executeMintTask(
   // ────────────────────────────────────────────────────────────────────────
 
   const preArmMs = targetAt.getTime() - Date.now();
+  const raceStartedAt = Date.now();
 
   await log(
     prisma,
@@ -217,6 +218,13 @@ export async function executeMintTask(
     preArmMs > 1_000
       ? `Pre-arming mint task. Target broadcast at ${targetAt.toISOString()}.`
       : "Starting immediate mint task execution.",
+  );
+  await log(
+    prisma,
+    task.id,
+    "info",
+    `MINT minting ${task.collection.slug} ${task.phaseType} stage.`,
+    { event: "race.start", collectionSlug: task.collection.slug, phaseType: task.phaseType, targetAt: targetAt.toISOString() },
   );
   await prisma.mintTask.update({
     where: { id: task.id },
@@ -394,6 +402,7 @@ export async function executeMintTask(
             "info",
             `Preparing wallet ${shortAddress(wallet.address)} before phase open.`,
           );
+          const walletRaceStartedAt = Date.now();
 
           const privateKey = await decryptPrivateKey(
             {
@@ -414,6 +423,19 @@ export async function executeMintTask(
             mintQuantity,
             async (message, contextJson) =>
               log(prisma, task.id, "warn", message, contextJson),
+          );
+          await log(
+            prisma,
+            task.id,
+            "info",
+            `${shortAddress(wallet.address)} GOT CALLDATA ${raceDelta(Date.now(), targetAt)} · ${calldataBytes(payload.data)}B.`,
+            {
+              event: "race.calldata",
+              walletId: wallet.id,
+              elapsedMs: Date.now() - walletRaceStartedAt,
+              deltaMs: Date.now() - targetAt.getTime(),
+              calldataBytes: calldataBytes(payload.data),
+            },
           );
           const [balanceWei, nonce] = await Promise.all([
             client.getBalance({ address: wallet.address as `0x${string}` }),
@@ -535,8 +557,15 @@ export async function executeMintTask(
             prisma,
             task.id,
             "info",
-            `Wallet ${shortAddress(wallet.address)} tx signed and ready.`,
-            { nonce, gasLimit: gasLimit.toString() },
+            `SIGN READY ${shortAddress(wallet.address)} pre-signed · ${raceDelta(Date.now(), targetAt)}.`,
+            {
+              event: "race.signReady",
+              walletId: wallet.id,
+              nonce,
+              gasLimit: gasLimit.toString(),
+              elapsedMs: Date.now() - walletRaceStartedAt,
+              deltaMs: Date.now() - targetAt.getTime(),
+            },
           );
 
           return {
@@ -691,6 +720,18 @@ export async function executeMintTask(
             where: { id: preparedMint.taskWalletId },
             data: { status: "broadcasting", progress: 90 },
           }).catch(() => undefined);
+          const walletBroadcastStartedAt = Date.now();
+          void log(
+            prisma,
+            task.id,
+            "info",
+            `${shortAddress(preparedMint.walletAddress)} DIRECT BROADCAST pre-signed ${raceDelta(walletBroadcastStartedAt, targetAt)}.`,
+            {
+              event: "race.directBroadcast",
+              walletId: preparedMint.walletId,
+              deltaMs: walletBroadcastStartedAt - targetAt.getTime(),
+            },
+          ).catch(() => undefined);
 
           const [broadcasts] = await Promise.all([
             broadcastMintTransaction(pool, network, preparedMint.signedTx),
@@ -700,6 +741,10 @@ export async function executeMintTask(
               ? sendFlashbotsBundle(preparedMint.signedTx, flashbotsAuthKey, currentBlockNumber, Math.floor(targetAt.getTime() / 1000))
                   .then((bundleHash) => {
                     if (bundleHash) {
+                      void log(prisma, task.id, "info",
+                        `BUNDLE submitted ${shortAddress(preparedMint.walletAddress)} · target blocks ${currentBlockNumber + 1n}-${currentBlockNumber + 3n} · flashbots ${Date.now() - walletBroadcastStartedAt}ms.`,
+                        { event: "race.builderSubmitted", route: "flashbotsBundle", bundleHash, walletId: preparedMint.walletId, elapsedMs: Date.now() - walletBroadcastStartedAt },
+                      ).catch(() => undefined);
                       void log(prisma, task.id, "info",
                         `Flashbots bundle submitted for wallet ${shortAddress(preparedMint.walletAddress)} targeting blocks ${currentBlockNumber + 1n}–${currentBlockNumber + 3n}.`,
                         { bundleHash, walletId: preparedMint.walletId },
@@ -714,6 +759,10 @@ export async function executeMintTask(
               ? sendFlashbotsPrivateTx(preparedMint.signedTx, flashbotsAuthKey, currentBlockNumber)
                   .then(() => {
                     void log(prisma, task.id, "info",
+                      `PRIVATE submitted ${shortAddress(preparedMint.walletAddress)} · flashbots ${Date.now() - walletBroadcastStartedAt}ms.`,
+                      { event: "race.builderSubmitted", route: "flashbotsPrivate", walletId: preparedMint.walletId, elapsedMs: Date.now() - walletBroadcastStartedAt },
+                    ).catch(() => undefined);
+                    void log(prisma, task.id, "info",
                       `Flashbots private tx submitted for wallet ${shortAddress(preparedMint.walletAddress)} (private mempool, no frontrun exposure).`,
                       { walletId: preparedMint.walletId },
                     ).catch(() => undefined);
@@ -724,6 +773,10 @@ export async function executeMintTask(
             isEthereum && buildersEnabled
               ? sendToFreeBuilders(preparedMint.signedTx)
                   .then(() => {
+                    void log(prisma, task.id, "info",
+                      `BUILDERS submitted ${shortAddress(preparedMint.walletAddress)} · free/mev ${Date.now() - walletBroadcastStartedAt}ms.`,
+                      { event: "race.builderSubmitted", route: "freeBuilders", walletId: preparedMint.walletId, elapsedMs: Date.now() - walletBroadcastStartedAt },
+                    ).catch(() => undefined);
                     void log(prisma, task.id, "info",
                       `Free builders + MEV Blocker submitted for wallet ${shortAddress(preparedMint.walletAddress)}.`,
                       { walletId: preparedMint.walletId },
@@ -736,6 +789,10 @@ export async function executeMintTask(
               ? sendToBloxroute(preparedMint.signedTx)
                   .then(() => {
                     void log(prisma, task.id, "info",
+                      `BDN submitted ${shortAddress(preparedMint.walletAddress)} · bloxroute ${Date.now() - walletBroadcastStartedAt}ms.`,
+                      { event: "race.builderSubmitted", route: "bloxroute", walletId: preparedMint.walletId, elapsedMs: Date.now() - walletBroadcastStartedAt },
+                    ).catch(() => undefined);
+                    void log(prisma, task.id, "info",
                       `Bloxroute BDN submitted for wallet ${shortAddress(preparedMint.walletAddress)}.`,
                       { walletId: preparedMint.walletId },
                     ).catch(() => undefined);
@@ -746,6 +803,10 @@ export async function executeMintTask(
             !isEthereum
               ? sendToBaseEndpoints(preparedMint.signedTx)
                   .then(() => {
+                    void log(prisma, task.id, "info",
+                      `BASE FAST submitted ${shortAddress(preparedMint.walletAddress)} · endpoints ${Date.now() - walletBroadcastStartedAt}ms.`,
+                      { event: "race.builderSubmitted", route: "baseFastEndpoints", walletId: preparedMint.walletId, elapsedMs: Date.now() - walletBroadcastStartedAt },
+                    ).catch(() => undefined);
                     void log(prisma, task.id, "info",
                       `Base fast endpoints submitted for wallet ${shortAddress(preparedMint.walletAddress)}.`,
                       { walletId: preparedMint.walletId },
@@ -785,6 +846,20 @@ export async function executeMintTask(
             },
           });
           const broadcastBlockNumber = await client.getBlockNumber().catch(() => null);
+          await log(
+            prisma,
+            task.id,
+            "info",
+            `FIRED ${shortAddress(preparedMint.walletAddress)} · sign 0ms · dispatch ${Date.now() - walletBroadcastStartedAt}ms · ${raceDelta(Date.now(), targetAt)} · ${hash.slice(0, 10)}...`,
+            {
+              event: "race.fired",
+              walletId: preparedMint.walletId,
+              txHash: hash,
+              elapsedMs: Date.now() - walletBroadcastStartedAt,
+              provider: successful?.provider ?? (alreadyKnown ? "already-known" : null),
+              broadcastBlockNumber: broadcastBlockNumber?.toString() ?? null,
+            },
+          );
           await log(
             prisma,
             task.id,
@@ -1150,6 +1225,28 @@ export async function executeMintTask(
             item.broadcastBlockNumber == null
               ? null
               : receipt.blockNumber <= item.broadcastBlockNumber + 1n;
+          const hitBlockIndex =
+            item.broadcastBlockNumber == null
+              ? null
+              : Number(receipt.blockNumber - item.broadcastBlockNumber);
+          await log(
+            prisma,
+            task.id,
+            "info",
+            `MINED ${task.collection.slug} · block ${receipt.blockNumber.toString()} · ${hitBlockIndex == null ? "block ?" : hitBlockIndex <= 1 ? "FIRST BLOCK" : `block #${hitBlockIndex}`} · gas ${formatGwei(receipt.effectiveGasPrice)}g · ${raceDelta(Date.now(), targetAt)}.`,
+            {
+              event: "race.mined",
+              walletId: item.walletId,
+              txHash: receipt.transactionHash,
+              blockNumber: receipt.blockNumber.toString(),
+              broadcastBlockNumber: item.broadcastBlockNumber?.toString() ?? null,
+              hitBlockIndex,
+              firstBlockHit,
+              gasUsed: receipt.gasUsed.toString(),
+              effectiveGasPriceGwei: formatGwei(receipt.effectiveGasPrice),
+              deltaMs: Date.now() - targetAt.getTime(),
+            },
+          );
           await log(
             prisma,
             task.id,
@@ -2492,6 +2589,17 @@ function formatGwei(wei: bigint): string {
   const whole = wei / 1_000_000_000n;
   const fraction = ((wei % 1_000_000_000n) / 10_000_000n).toString().padStart(2, "0");
   return `${whole.toString()}.${fraction}`;
+}
+
+function raceDelta(atMs: number, targetAt: Date): string {
+  const delta = atMs - targetAt.getTime();
+  const abs = Math.abs(delta);
+  if (delta === 0) return "+0ms at open";
+  return `${delta > 0 ? "+" : "-"}${abs}ms ${delta > 0 ? "after" : "before"} open`;
+}
+
+function calldataBytes(data: Hex): number {
+  return Math.max(0, (data.length - 2) / 2);
 }
 
 function isReceiptPending(error: unknown) {

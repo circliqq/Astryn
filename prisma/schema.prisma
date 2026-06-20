@@ -99,6 +99,7 @@ model User {
   usageMetrics       UsageMetric[]
   featureFlagsUpdated FeatureFlag[]         @relation("FeatureFlagUpdater")
   directMintTasks     DirectMintTask[]
+  bundleMintTasks     BundleMintTask[]
   trackedWallets      TrackedWallet[]
 
   @@index([role])
@@ -139,6 +140,7 @@ model Wallet {
   groups                WalletGroupMember[]
   taskWallets           MintTaskWallet[]
   directMintTaskWallets DirectMintTaskWallet[]
+  bundleMintTaskWallets BundleMintTaskWallet[]
   transactions          Transaction[]
   healthChecks          WalletHealthCheck[]
   simulationResults     SimulationResult[]
@@ -920,4 +922,94 @@ model DirectMintLog {
   directMintTask   DirectMintTask @relation(fields: [directMintTaskId], references: [id], onDelete: Cascade)
 
   @@index([directMintTaskId, createdAt])
+}
+
+// ── Bundle Mint ─────────────────────────────────────────────────────────────
+// Atomic, same-block minting via Flashbots bundle (Ethereum) or fast parallel
+// broadcast (Base). Falcon-style "bundle mint" sub-feature under Minting.
+
+enum BundleMode {
+  MULTI_WALLET           // many wallets mint together in ONE Flashbots bundle
+  SINGLE_WALLET_MULTI_TX // one wallet sends multiple mint txs in the same block
+  EIP7702                // sub-wallets delegate to an executor; main wallet sends
+                         // ONE atomic type-4 tx that mints from all of them
+}
+
+enum BundleMintKind {
+  SEADROP // OpenSea SeaDrop mintPublic — only contract + price + quantity needed
+  CUSTOM  // arbitrary write function via supplied ABI entry
+}
+
+enum ValuePayer {
+  TX_SENDER // relayer/sponsor wallet forwards the mint ETH
+  DELEGATED // each sub-wallet pays the mint price from its own balance
+}
+
+model BundleMintTask {
+  id              String                 @id @default(uuid())
+  userId          String
+  contractAddress String
+  chain           Network
+  kind            BundleMintKind         @default(SEADROP)
+  mode            BundleMode             @default(MULTI_WALLET)
+  // CUSTOM kind only — ignored for SEADROP
+  functionName    String?
+  functionAbi     Json?
+  callArgs        Json?
+  // SEADROP kind only — per-mint price in wei
+  mintPriceWei    String                 @default("0")
+  valueWei        String                 @default("0")
+  status          MintTaskStatus         @default(DRAFT)
+  // bundle controls
+  mintQuantity    Int                    @default(1) // quantity per tx
+  txPerWallet     Int                    @default(1) // SINGLE_WALLET_MULTI_TX: how many txs from the wallet
+  targetBlock     String?                            // explicit target block, else current+blockOffset
+  blockOffset     Int                    @default(1) // how many blocks ahead to target
+  maxBlockRetries Int                    @default(3) // re-target this many blocks if not included
+  // EIP7702 mode only
+  sponsorWalletId String?                            // main/relayer wallet (gas + optional mint ETH)
+  executorAddress String?                            // deployed BundleMint7702 executor
+  valuePayer      ValuePayer @default(TX_SENDER)     // who pays the mint price
+  startTimestampMs String?                           // ms epoch to fire the bundle at (optional)
+  // results
+  bundleHash      String?
+  includedBlock   String?
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  gasSettingsJson Json
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  user            User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  wallets         BundleMintTaskWallet[]
+  logs            BundleMintLog[]
+
+  @@index([userId, status])
+  @@index([contractAddress])
+}
+
+model BundleMintTaskWallet {
+  id               String         @id @default(uuid())
+  bundleMintTaskId String
+  walletId         String
+  status           String         @default("waiting")
+  txHash           String?
+  errorMessage     String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  bundleMintTask   BundleMintTask @relation(fields: [bundleMintTaskId], references: [id], onDelete: Cascade)
+  wallet           Wallet         @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@unique([bundleMintTaskId, walletId])
+}
+
+model BundleMintLog {
+  id               String         @id @default(uuid())
+  bundleMintTaskId String
+  level            String         @default("info")
+  message          String
+  createdAt        DateTime       @default(now())
+  bundleMintTask   BundleMintTask @relation(fields: [bundleMintTaskId], references: [id], onDelete: Cascade)
+
+  @@index([bundleMintTaskId, createdAt])
 }
