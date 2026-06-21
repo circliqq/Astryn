@@ -19,9 +19,9 @@ import { getAddress, parseAbiItem, zeroAddress, type Address } from "viem";
 
 const SEADROP_ADDRESS = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5" as Address;
 
-// First-run backfill (chunked) + per-chunk max range (RPC getLogs friendly).
-const FIRST_RUN_BACKFILL = 60_000n; // ~a few days of blocks on first run
-const MAX_RANGE = 9_000n;
+// First-run backfill (chunked) + per-chunk max range (public-RPC getLogs friendly).
+const FIRST_RUN_BACKFILL = 15_000n;
+const MAX_RANGE = 1_000n;
 
 const PUBLIC_DROP_UPDATED_ABI = parseAbiItem(
   "event PublicDropUpdated(address indexed nftContract, (uint80 mintPrice, uint48 startTime, uint48 endTime, uint16 maxTotalMintableByWallet, uint16 feeBps, bool restrictFeeRecipients) publicDrop)",
@@ -76,21 +76,18 @@ export async function scanDrops(prisma: PrismaClient): Promise<{ found: number }
         continue;
       }
 
-      // Scan in chunks (first run backfills several days; later runs do ~1 chunk).
+      // Scan in chunks across getLogs-friendly RPCs.
+      const urls = await candidateUrls(prisma, chainName);
       let cur = fromBlock;
       let chainFound = 0;
       while (cur <= latest) {
         const end = cur + MAX_RANGE > latest ? latest : cur + MAX_RANGE;
-        let logs;
-        try {
-          logs = await client.getLogs({
-            address: SEADROP_ADDRESS,
-            event: PUBLIC_DROP_UPDATED_ABI,
-            fromBlock: cur,
-            toBlock: end,
-          });
-        } catch (err) {
-          logger.warn({ chainName, error: errMsg(err), from: cur.toString(), to: end.toString() }, "drop-scanner: getLogs failed");
+        const logs = await getLogsAcrossRpcs(urls, chainName, cur, end);
+        if (logs === null) {
+          logger.warn(
+            { chainName, from: cur.toString(), to: end.toString() },
+            "drop-scanner: all RPCs rejected getLogs range",
+          );
           break;
         }
 
@@ -502,7 +499,24 @@ async function upsertCursor(prisma: PrismaClient, chain: Network, block: bigint)
   });
 }
 
-function rpcUrlsFor(network: "base" | "ethereum"): string[] {
+// getLogs-friendly public RPCs (free, generous log ranges — unlike Alchemy free
+// which caps eth_getLogs at 10 blocks). Tried first for the scanner.
+const CURATED_RPCS: Record<"ethereum" | "base", string[]> = {
+  ethereum: [
+    "https://ethereum.publicnode.com",
+    "https://eth.llamarpc.com",
+    "https://eth.drpc.org",
+    "https://rpc.ankr.com/eth",
+  ],
+  base: [
+    "https://base.publicnode.com",
+    "https://base.llamarpc.com",
+    "https://base.drpc.org",
+    "https://mainnet.base.org",
+  ],
+};
+
+function envRpcsFor(network: "base" | "ethereum"): string[] {
   const prefix = network === "base" ? "BASE" : "ETH";
   return [
     process.env[`${prefix}_RPC_PRIMARY`],
@@ -511,15 +525,8 @@ function rpcUrlsFor(network: "base" | "ethereum"): string[] {
   ].filter(Boolean) as string[];
 }
 
-/**
- * Try env RPCs first, then the user's enabled RPC endpoints from the DB
- * (the same ones shown in the dashboard's RPC Health), and return the first
- * client that responds — so a dead primary never blocks the scanner.
- */
-async function pickClient(
-  prisma: PrismaClient,
-  chainName: "ethereum" | "base",
-): Promise<{ client: ScanClient; latest: bigint } | null> {
+/** Ordered RPC candidates: curated getLogs-friendly first, then DB + env. */
+async function candidateUrls(prisma: PrismaClient, chainName: "ethereum" | "base"): Promise<string[]> {
   const network: Network = chainName === "base" ? "BASE" : "ETHEREUM";
   let dbUrls: string[] = [];
   try {
@@ -533,15 +540,45 @@ async function pickClient(
   } catch {
     /* ignore */
   }
+  return [...new Set([...CURATED_RPCS[chainName], ...dbUrls, ...envRpcsFor(chainName)])];
+}
 
-  const urls = [...new Set([...rpcUrlsFor(chainName), ...dbUrls])];
-  for (const rpcUrl of urls) {
+/** First RPC whose getBlockNumber responds — used for on-chain reads/velocity. */
+async function pickClient(
+  prisma: PrismaClient,
+  chainName: "ethereum" | "base",
+): Promise<{ client: ScanClient; latest: bigint } | null> {
+  for (const rpcUrl of await candidateUrls(prisma, chainName)) {
     try {
       const client = createMintPublicClient({ chainName, rpcUrl });
       const latest = await client.getBlockNumber();
       return { client, latest };
     } catch {
       // Try the next RPC.
+    }
+  }
+  return null;
+}
+
+/** Run getLogs across candidate RPCs until one accepts the block range. */
+async function getLogsAcrossRpcs(
+  urls: string[],
+  chainName: "ethereum" | "base",
+  fromBlock: bigint,
+  toBlock: bigint,
+): Promise<unknown[] | null> {
+  for (const rpcUrl of urls) {
+    try {
+      const client = createMintPublicClient({ chainName, rpcUrl });
+      const logs = await client.getLogs({
+        address: SEADROP_ADDRESS,
+        event: PUBLIC_DROP_UPDATED_ABI,
+        fromBlock,
+        toBlock,
+      });
+      return logs;
+    } catch {
+      // Range rejected / RPC down — try the next one.
     }
   }
   return null;
