@@ -19,9 +19,9 @@ import { getAddress, parseAbiItem, zeroAddress, type Address } from "viem";
 
 const SEADROP_ADDRESS = "0x00005EA00Ac477B1030CE78506496e8C2dE24bf5" as Address;
 
-// First-run look-back and per-run max range (kept small to respect RPC getLogs limits).
-const FIRST_RUN_LOOKBACK = 2_000n;
-const MAX_RANGE = 2_000n;
+// First-run backfill (chunked) + per-chunk max range (RPC getLogs friendly).
+const FIRST_RUN_BACKFILL = 60_000n; // ~a few days of blocks on first run
+const MAX_RANGE = 9_000n;
 
 const PUBLIC_DROP_UPDATED_ABI = parseAbiItem(
   "event PublicDropUpdated(address indexed nftContract, (uint80 mintPrice, uint48 startTime, uint48 endTime, uint16 maxTotalMintableByWallet, uint16 feeBps, bool restrictFeeRecipients) publicDrop)",
@@ -68,58 +68,72 @@ export async function scanDrops(prisma: PrismaClient): Promise<{ found: number }
       const latest = await client.getBlockNumber();
 
       const cursor = await prisma.scannerCursor.findUnique({ where: { chain: network } });
-      let fromBlock = cursor ? BigInt(cursor.lastBlock) + 1n : latest - FIRST_RUN_LOOKBACK;
-      if (fromBlock < 0n) fromBlock = 0n;
+      let fromBlock = cursor
+        ? BigInt(cursor.lastBlock) + 1n
+        : latest > FIRST_RUN_BACKFILL
+          ? latest - FIRST_RUN_BACKFILL
+          : 0n;
       if (fromBlock > latest) {
-        // Nothing new — still advance cursor.
         await upsertCursor(prisma, network, latest);
         continue;
       }
-      const toBlock = fromBlock + MAX_RANGE > latest ? latest : fromBlock + MAX_RANGE;
 
-      const logs = await client.getLogs({
-        address: SEADROP_ADDRESS,
-        event: PUBLIC_DROP_UPDATED_ABI,
-        fromBlock,
-        toBlock,
-      });
+      // Scan in chunks (first run backfills several days; later runs do ~1 chunk).
+      let cur = fromBlock;
+      let chainFound = 0;
+      while (cur <= latest) {
+        const end = cur + MAX_RANGE > latest ? latest : cur + MAX_RANGE;
+        let logs;
+        try {
+          logs = await client.getLogs({
+            address: SEADROP_ADDRESS,
+            event: PUBLIC_DROP_UPDATED_ABI,
+            fromBlock: cur,
+            toBlock: end,
+          });
+        } catch (err) {
+          logger.warn({ chainName, error: errMsg(err), from: cur.toString(), to: end.toString() }, "drop-scanner: getLogs failed");
+          break;
+        }
 
-      for (const log of logs) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const args = (log as any).args ?? {};
-        const nftContract = args.nftContract as string | undefined;
-        const drop = args.publicDrop as
-          | {
-              mintPrice: bigint;
-              startTime: bigint | number;
-              endTime: bigint | number;
-              maxTotalMintableByWallet: bigint | number;
-            }
-          | undefined;
-        if (!nftContract || !drop) continue;
+        for (const log of logs) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const args = (log as any).args ?? {};
+          const nftContract = args.nftContract as string | undefined;
+          const drop = args.publicDrop as
+            | {
+                mintPrice: bigint;
+                startTime: bigint | number;
+                endTime: bigint | number;
+                maxTotalMintableByWallet: bigint | number;
+              }
+            | undefined;
+          if (!nftContract || !drop) continue;
 
-        const contract = getAddress(nftContract);
-        const startMs = Number(drop.startTime) * 1000;
-        const endMs = Number(drop.endTime) * 1000;
-        const priceWei = (drop.mintPrice ?? 0n).toString();
-        const maxPerWallet = Number(drop.maxTotalMintableByWallet ?? 0) || null;
+          const contract = getAddress(nftContract);
+          const startMs = Number(drop.startTime) * 1000;
+          const endMs = Number(drop.endTime) * 1000;
+          const priceWei = (drop.mintPrice ?? 0n).toString();
+          const maxPerWallet = Number(drop.maxTotalMintableByWallet ?? 0) || null;
 
-        await enrichAndUpsert(prisma, openSea, client, {
-          network,
-          chainName,
-          contract,
-          startMs,
-          endMs,
-          priceWei,
-          maxPerWallet,
-        });
-        totalFound++;
+          await enrichAndUpsert(prisma, openSea, client, {
+            network,
+            chainName,
+            contract,
+            startMs,
+            endMs,
+            priceWei,
+            maxPerWallet,
+          });
+          chainFound++;
+          totalFound++;
+        }
+
+        await upsertCursor(prisma, network, end);
+        cur = end + 1n;
       }
 
-      await upsertCursor(prisma, network, toBlock);
-      if (logs.length) {
-        logger.info({ chainName, found: logs.length, fromBlock: fromBlock.toString(), toBlock: toBlock.toString() }, "drop-scanner: scanned");
-      }
+      logger.info({ chainName, found: chainFound, latest: latest.toString() }, "drop-scanner: scan cycle done");
     } catch (error) {
       logger.warn({ chainName, error: errMsg(error) }, "drop-scanner: chain scan failed");
     }

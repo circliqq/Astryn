@@ -106,6 +106,7 @@ export default function LiveScannerPage() {
   const [sort, setSort] = useState<SortKey>("minting");
   const [onlyFree, setOnlyFree] = useState(false);
   const [onlyLinked, setOnlyLinked] = useState(false);
+  const [onlyTwitter, setOnlyTwitter] = useState(false);
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -131,6 +132,7 @@ export default function LiveScannerPage() {
     let list = [...raw];
     if (onlyFree) list = list.filter((d) => !d.publicPriceWei || d.publicPriceWei === "0");
     if (onlyLinked) list = list.filter((d) => d.hasTwitter || d.hasDiscord || d.hasWebsite);
+    if (onlyTwitter) list = list.filter((d) => d.hasTwitter);
     list.sort((a, b) => {
       if (sort === "minting") return b.mints5m - a.mints5m;
       const al = (a.maxSupply ?? 0) - (a.supply ?? 0);
@@ -138,7 +140,7 @@ export default function LiveScannerPage() {
       return bl - al;
     });
     return list;
-  }, [raw, onlyFree, onlyLinked, sort]);
+  }, [raw, onlyFree, onlyLinked, onlyTwitter, sort]);
 
   const live = raw.filter((d) => d.status === "live").length;
 
@@ -195,6 +197,16 @@ export default function LiveScannerPage() {
             }`}
           >
             <Link2 size={11} /> Linked
+          </button>
+          <button
+            type="button"
+            onClick={() => setOnlyTwitter((v) => !v)}
+            className={`rounded-full border px-3 py-1 text-[12px] font-semibold ${
+              onlyTwitter ? "border-brand bg-brand-bg text-graphite-100" : "border-graphite-700 bg-graphite-800 text-graphite-400"
+            }`}
+            title="Only collections with an X / Twitter account"
+          >
+            𝕏 account
           </button>
           <div className="ml-auto flex items-center gap-2">
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="search…" className="h-8 w-40" />
@@ -308,6 +320,7 @@ export default function LiveScannerPage() {
                     <Stat label="Sales">{d.salesCount?.toLocaleString() ?? "—"}</Stat>
                     <Stat label="Links">
                       <span className="flex gap-1.5 text-brand">
+                        {d.hasTwitter && <span>x</span>}
                         {d.hasWebsite && <span>web</span>}
                         {d.hasDiscord && <span>discord</span>}
                         {!d.hasWebsite && !d.hasDiscord && !d.hasTwitter && <span className="text-graphite-600">—</span>}
