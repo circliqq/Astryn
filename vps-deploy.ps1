@@ -20,6 +20,7 @@ cp /root/app/apps/worker/src/main.ts /opt/astryn/apps/worker/src/main.ts
 # ── API ─────────────────────────────────────────────────────
 cp /root/app/apps/api/src/modules/domains/bundle-mint.module.ts /opt/astryn/apps/api/src/modules/domains/bundle-mint.module.ts
 cp /root/app/apps/api/src/modules/app.module.ts /opt/astryn/apps/api/src/modules/app.module.ts
+cp /root/app/apps/api/src/modules/events/events.gateway.ts /opt/astryn/apps/api/src/modules/events/events.gateway.ts
 
 # ── Packages ────────────────────────────────────────────────
 cp /root/app/packages/blockchain/src/index.ts /opt/astryn/packages/blockchain/src/index.ts
@@ -36,12 +37,14 @@ grep -q '^BUNDLE_MINT_7702_EXECUTOR_ETH='  .env || echo 'BUNDLE_MINT_7702_EXECUT
 grep -q '^BUNDLE_MINT_7702_EXECUTOR_BASE=' .env || echo 'BUNDLE_MINT_7702_EXECUTOR_BASE=' >> .env
 grep -q '^ETH_FLASHBOTS_AUTH_KEY='         .env || echo 'ETH_FLASHBOTS_AUTH_KEY='         >> .env
 
-# ── DB migration (new Bundle Mint tables + 7702 / value-payer columns) ──
-npx prisma migrate deploy --schema prisma/schema.prisma
-
 # ── Rebuild + restart (web, worker, api all changed) ────────
 docker compose build --no-cache web worker api
 docker compose up -d web worker api
+
+# ── DB migration: run INSIDE the api container (host has no npx) ──
+sleep 8
+docker compose exec -T api npx prisma migrate deploy --schema prisma/schema.prisma
+
 docker compose ps web worker api
 "@
 

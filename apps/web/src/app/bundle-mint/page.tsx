@@ -186,7 +186,6 @@ export default function BundleMintPage() {
           maxFeeGwei: advancedGas.maxFeeGwei,
           priorityFeeGwei: advancedGas.priorityFeeGwei,
           maxTotalGasCostEth: advancedGas.maxTotalGasCostEth,
-          gasGuardianEnabled: true,
           gasBumpEnabled: true,
           maxBumpAttempts: advancedGas.maxBumpAttempts,
         }
