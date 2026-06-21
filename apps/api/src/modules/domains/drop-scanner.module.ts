@@ -32,7 +32,12 @@ class DropScannerController {
   ) {
     const where: Prisma.ScannedDropWhereInput = {};
     if (chain === "ETHEREUM" || chain === "BASE") where.chain = chain;
-    if (status === "upcoming" || status === "live" || status === "ended") where.status = status;
+    if (status === "upcoming" || status === "live" || status === "ended") {
+      where.status = status;
+    } else {
+      // Default: hide ended drops — show only live + upcoming.
+      where.status = { not: "ended" };
+    }
     const maxRiskNum = maxRisk ? Number(maxRisk) : NaN;
     if (Number.isFinite(maxRiskNum)) where.riskScore = { lte: maxRiskNum };
     if (q && q.trim()) {

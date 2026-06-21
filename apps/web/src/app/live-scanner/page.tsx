@@ -107,6 +107,8 @@ export default function LiveScannerPage() {
   const [onlyFree, setOnlyFree] = useState(false);
   const [onlyLinked, setOnlyLinked] = useState(false);
   const [onlyTwitter, setOnlyTwitter] = useState(false);
+  const [mintingId, setMintingId] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
 
   const qs = useMemo(() => {
     const p = new URLSearchParams();
@@ -127,6 +129,25 @@ export default function LiveScannerPage() {
     mutationFn: () => apiFetch<{ ok: boolean }>("/scanner-feed/scan-now", { method: "POST" }),
     onSuccess: () => setTimeout(() => void refetch(), 4000),
   });
+
+  // Open the normal mint-setup flow: resolve/create a Collection, then route to it.
+  async function goMint(d: ScannedDrop) {
+    setPageError(null);
+    setMintingId(d.id);
+    try {
+      const col = await apiFetch<{ id: string }>("/collections/scan-by-contract", {
+        method: "POST",
+        body: JSON.stringify({
+          contractAddress: d.contractAddress,
+          chain: d.chain === "BASE" ? "base" : "ethereum",
+        }),
+      });
+      router.push(`/mint-setup?collectionId=${col.id}`);
+    } catch (e) {
+      setMintingId(null);
+      setPageError(e instanceof Error ? e.message : "Could not open mint setup for this collection.");
+    }
+  }
 
   const drops = useMemo(() => {
     let list = [...raw];
@@ -156,6 +177,12 @@ export default function LiveScannerPage() {
           {dataUpdatedAt > 0 && <span>· updated {new Date(dataUpdatedAt).toLocaleTimeString()}</span>}
           {isFetching && <Loader2 size={11} className="animate-spin" />}
         </div>
+
+        {pageError && (
+          <p className="rounded-md border border-status-red-border bg-status-red-bg px-3 py-2 text-[12px] text-status-red-text">
+            {pageError}
+          </p>
+        )}
 
         {/* Sort + filters */}
         <div className="flex flex-wrap items-center gap-2">
@@ -224,9 +251,10 @@ export default function LiveScannerPage() {
               onChange={(e) => setStatus(e.target.value)}
               className="h-8 rounded-md border border-graphite-700 bg-graphite-800 px-2 text-[12px] text-graphite-100"
             >
-              <option value="">Any status</option>
+              <option value="">Live + upcoming</option>
               <option value="live">Live</option>
               <option value="upcoming">Upcoming</option>
+              <option value="ended">Ended</option>
             </select>
             <Button type="button" onClick={() => scanNow.mutate()} disabled={scanNow.isPending}>
               {scanNow.isPending ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
@@ -339,13 +367,18 @@ export default function LiveScannerPage() {
                     <Button
                       className="flex-1"
                       type="button"
-                      onClick={() =>
-                        router.push(
-                          `/bundle-mint?contract=${d.contractAddress}&chain=${d.chain === "BASE" ? "base" : "ethereum"}`,
-                        )
-                      }
+                      disabled={mintingId === d.id}
+                      onClick={() => goMint(d)}
                     >
-                      <span className="flex items-center justify-center gap-1.5"><Zap size={12} /> Mint</span>
+                      {mintingId === d.id ? (
+                        <span className="flex items-center justify-center gap-1.5">
+                          <Loader2 size={12} className="animate-spin" /> Opening…
+                        </span>
+                      ) : (
+                        <span className="flex items-center justify-center gap-1.5">
+                          <Zap size={12} /> Mint
+                        </span>
+                      )}
                     </Button>
                     {d.slug && (
                       <a
