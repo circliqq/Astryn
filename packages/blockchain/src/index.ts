@@ -775,6 +775,19 @@ export const BUNDLE_MINT_7702_ABI = [
   },
   {
     type: "function",
+    name: "orchestrateCallMulti",
+    stateMutability: "payable",
+    inputs: [
+      { name: "minters", type: "address[]" },
+      { name: "target", type: "address" },
+      { name: "values", type: "uint256[]" },
+      { name: "datas", type: "bytes[]" },
+      { name: "payFromSender", type: "bool" },
+    ],
+    outputs: [],
+  },
+  {
+    type: "function",
     name: "setRelayer",
     stateMutability: "nonpayable",
     inputs: [{ name: "next", type: "address" }],
@@ -847,6 +860,40 @@ export function buildOrchestrateCallCalldata(params: BundleCallParams): {
 
   const totalValue = params.payFromSender ? perMinter * BigInt(minters.length) : 0n;
   return { data, totalValue };
+}
+
+export interface BundleCallMultiEntry {
+  minter: Address;
+  valueWei: bigint | string;
+  data: Hex;
+}
+
+export interface BundleCallMultiParams {
+  target: Address;
+  entries: BundleCallMultiEntry[];
+  payFromSender: boolean;
+}
+
+/**
+ * Build calldata for orchestrateCallMulti — each minter runs its OWN calldata
+ * and value. Used for OpenSea allowlist / signed drops (per-wallet proof/sig).
+ */
+export function buildOrchestrateCallMultiCalldata(params: BundleCallMultiParams): {
+  data: Hex;
+  totalValue: bigint;
+} {
+  const minters = params.entries.map((e) => getAddress(e.minter));
+  const values = params.entries.map((e) => BigInt(e.valueWei));
+  const datas = params.entries.map((e) => e.data);
+
+  const data = encodeFunctionData({
+    abi: BUNDLE_MINT_7702_ABI,
+    functionName: "orchestrateCallMulti",
+    args: [minters, getAddress(params.target), values, datas, params.payFromSender],
+  });
+
+  const sum = values.reduce((acc, v) => acc + v, 0n);
+  return { data, totalValue: params.payFromSender ? sum : 0n };
 }
 
 /**

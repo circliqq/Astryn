@@ -959,6 +959,9 @@ model BundleMintTask {
   // SEADROP kind only — per-mint price in wei
   mintPriceWei    String                 @default("0")
   valueWei        String                 @default("0")
+  // OpenSea gated phases (allowlist/signed/gtd/fcfs): fetch per-wallet payload
+  collectionSlug  String?                            // OpenSea collection slug
+  openSeaPhase    String?                            // public | allowlist | gtd | fcfs
   status          MintTaskStatus         @default(DRAFT)
   // bundle controls
   mintQuantity    Int                    @default(1) // quantity per tx

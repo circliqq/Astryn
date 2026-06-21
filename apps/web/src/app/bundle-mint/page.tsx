@@ -102,6 +102,10 @@ export default function BundleMintPage() {
   const [mintPriceEth, setMintPriceEth] = useState("0");
   const [mintQuantity, setMintQuantity] = useState("1");
 
+  // OpenSea gated phase (allowlist / signed / gtd / fcfs)
+  const [openSeaPhase, setOpenSeaPhase] = useState<"public" | "allowlist" | "gtd" | "fcfs">("public");
+  const [collectionSlug, setCollectionSlug] = useState("");
+
   // custom abi
   const [abiFetchResult, setAbiFetchResult] = useState<AbiFetchResult | null>(null);
   const [abiFetchError, setAbiFetchError] = useState<string | null>(null);
@@ -259,6 +263,10 @@ export default function BundleMintPage() {
         maxBlockRetries: Math.max(0, Number.parseInt(maxBlockRetries, 10) || 0),
         targetBlock: targetBlock.trim() || undefined,
       };
+      if (collectionSlug.trim()) {
+        body.collectionSlug = collectionSlug.trim();
+        body.openSeaPhase = openSeaPhase;
+      }
       if (is7702) {
         body.sponsorWalletId = sponsorWalletId;
         body.executorAddress = executorAddress.trim() || undefined;
@@ -396,7 +404,45 @@ export default function BundleMintPage() {
                   ))}
                 </div>
 
-                {/* SeaDrop inputs */}
+                {/* OpenSea phase — allowlist / signed (GTD/FCFS) via OpenSea per-wallet payload */}
+                <div className="grid gap-3 rounded-md border border-graphite-700 bg-graphite-800/60 p-4 md:grid-cols-2">
+                  <label>
+                    <span className="mb-1 block text-[11px] font-medium text-graphite-400">
+                      Phase
+                    </span>
+                    <Select
+                      value={openSeaPhase}
+                      onChange={(e) =>
+                        setOpenSeaPhase(e.target.value as "public" | "allowlist" | "gtd" | "fcfs")
+                      }
+                    >
+                      <option value="public">Public</option>
+                      <option value="allowlist">Allowlist</option>
+                      <option value="gtd">GTD (signed)</option>
+                      <option value="fcfs">FCFS (signed)</option>
+                    </Select>
+                  </label>
+                  {openSeaPhase !== "public" && (
+                    <label>
+                      <span className="mb-1 block text-[11px] font-medium text-graphite-400">
+                        OpenSea collection slug *
+                      </span>
+                      <Input
+                        value={collectionSlug}
+                        onChange={(e) => setCollectionSlug(e.target.value)}
+                        placeholder="e.g. my-drop"
+                      />
+                    </label>
+                  )}
+                  {openSeaPhase !== "public" && (
+                    <p className="text-[10px] text-graphite-500 md:col-span-2">
+                      Allowlist / signed: per-wallet proof &amp; signature are fetched from OpenSea
+                      automatically (works across all bundle modes). Wallets must be eligible.
+                    </p>
+                  )}
+                </div>
+
+                {/* SeaDrop inputs (price ignored for gated phases — OpenSea supplies it) */}
                 {kind === "SEADROP" && (
                   <div className="grid gap-3 rounded-md border border-graphite-700 bg-graphite-800/60 p-4 md:grid-cols-2">
                     <label>

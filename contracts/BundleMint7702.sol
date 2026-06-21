@@ -62,6 +62,7 @@ contract BundleMint7702 {
     error NotSelf();
     error Reentrancy();
     error InsufficientValue();
+    error LengthMismatch();
     error MintFailed(address minter);
     error ExecFailed(address minter);
 
@@ -165,6 +166,42 @@ contract BundleMint7702 {
             );
             if (!ok) revert ExecFailed(minter);
             emit BundleMinted(minter, perMinterValue);
+        }
+
+        _refundDust();
+    }
+
+    /**
+     * Per-wallet generic mint: each minter runs its OWN calldata + value.
+     * Use for OpenSea allowlist / signed (GTD/FCFS) drops where the proof or
+     * signature differs per wallet — the calldata is fetched off-chain (e.g.
+     * OpenSea's mint endpoint) and passed in here, one entry per minter.
+     */
+    function orchestrateCallMulti(
+        address[] calldata minters,
+        address target,
+        uint256[] calldata values,
+        bytes[] calldata datas,
+        bool payFromSender
+    ) external payable onlyRelayer nonReentrant {
+        if (minters.length != values.length || minters.length != datas.length) {
+            revert LengthMismatch();
+        }
+
+        if (payFromSender) {
+            uint256 total;
+            for (uint256 i = 0; i < values.length; i++) total += values[i];
+            if (msg.value < total) revert InsufficientValue();
+        }
+
+        for (uint256 i = 0; i < minters.length; i++) {
+            address minter = minters[i];
+            uint256 forwarded = payFromSender ? values[i] : 0;
+            (bool ok, ) = minter.call{value: forwarded}(
+                abi.encodeWithSelector(this.callExec.selector, target, values[i], datas[i])
+            );
+            if (!ok) revert ExecFailed(minter);
+            emit BundleMinted(minter, values[i]);
         }
 
         _refundDust();

@@ -74,6 +74,15 @@ class CreateBundleMintTaskDto {
   @IsString()
   mintPriceWei?: string;
 
+  // OpenSea gated phases (allowlist / signed / gtd / fcfs)
+  @IsOptional()
+  @IsString()
+  collectionSlug?: string;
+
+  @IsOptional()
+  @IsIn(["public", "allowlist", "gtd", "fcfs"])
+  openSeaPhase?: "public" | "allowlist" | "gtd" | "fcfs";
+
   // CUSTOM
   @IsOptional()
   @IsString()
@@ -188,6 +197,8 @@ class BundleMintController {
         callArgs: body.kind === "CUSTOM" ? ((body.callArgs ?? []) as Prisma.InputJsonValue) : Prisma.DbNull,
         mintPriceWei: body.mintPriceWei ?? "0",
         valueWei: body.valueWei ?? "0",
+        collectionSlug: body.collectionSlug?.trim() || null,
+        openSeaPhase: body.collectionSlug?.trim() ? body.openSeaPhase ?? "public" : null,
         gasSettingsJson: body.gasSettings,
         mintQuantity: body.mintQuantity ?? 1,
         txPerWallet: body.txPerWallet ?? 1,

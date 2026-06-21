@@ -19,6 +19,7 @@ import type { PrismaClient } from "@prisma/client";
 import { decryptPrivateKey } from "@mint-copilot/wallet-crypto";
 import {
   buildOrchestrateCallCalldata,
+  buildOrchestrateCallMultiCalldata,
   buildOrchestrateSeaDropCalldata,
   createMintPublicClient,
   createSeaDropPublicMintPayload,
@@ -27,6 +28,8 @@ import {
   signTransaction,
   waitForReceipt,
 } from "@mint-copilot/blockchain";
+import { OpenSeaClient } from "@mint-copilot/opensea";
+import type { MintPhaseType } from "@mint-copilot/shared";
 import { fetchCurrentGas, resolveGasFees, type GasSettings } from "@mint-copilot/gas-engine";
 import { logger } from "@mint-copilot/logger";
 import {
@@ -112,7 +115,40 @@ export async function processBundleMintJob(
   const contractAddress = task.contractAddress as `0x${string}`;
   const quantity = Math.max(1, task.mintQuantity);
 
+  // OpenSea gated phases (allowlist / signed / gtd / fcfs): fetch a ready,
+  // per-wallet mint payload from OpenSea — proof/signature are baked into the
+  // calldata, so we don't compute merkle proofs or signatures ourselves.
+  type OsPayload = { to: `0x${string}`; data: Hex; value: bigint };
+  let osPayloads: Map<string, OsPayload> | null = null;
+  if (task.collectionSlug) {
+    osPayloads = new Map();
+    const openSea = new OpenSeaClient({ apiKey: env("OPENSEA_API_KEY") });
+    const phase = (task.openSeaPhase ?? "public") as MintPhaseType;
+    const addrs =
+      task.mode === "SINGLE_WALLET_MULTI_TX"
+        ? task.wallets.slice(0, 1).map((w: { wallet: { address: string } }) => w.wallet.address)
+        : task.wallets.map((w: { wallet: { address: string } }) => w.wallet.address);
+    await taskLog("info", `Fetching OpenSea "${phase}" payloads for ${addrs.length} wallet(s) (slug ${task.collectionSlug})…`);
+    for (const addr of addrs) {
+      try {
+        const p = await openSea.getMintPayload(task.collectionSlug as string, addr, quantity, phase);
+        osPayloads.set(addr.toLowerCase(), { to: p.to, data: p.data as Hex, value: p.value });
+      } catch (e) {
+        await taskLog("warn", `${shorten(addr)}: OpenSea payload failed — ${rawError(e)}`);
+      }
+    }
+    if (osPayloads.size === 0) {
+      await markFailed(prisma, taskId, "No OpenSea mint payloads could be fetched (check slug / phase / eligibility).");
+      return;
+    }
+  }
+
   function buildCall(minter: `0x${string}`): { to: `0x${string}`; data: Hex; value: bigint } {
+    if (osPayloads) {
+      const p = osPayloads.get(minter.toLowerCase());
+      if (!p) throw new Error(`No OpenSea payload for ${minter} (not eligible / fetch failed).`);
+      return p;
+    }
     if (task.kind === "SEADROP") {
       const payload = createSeaDropPublicMintPayload({
         nftContract: contractAddress,
@@ -186,6 +222,7 @@ export async function processBundleMintJob(
       contractAddress,
       quantity,
       buildCall,
+      osPayloads,
       gasFees,
       taskLog,
     });
@@ -351,13 +388,14 @@ interface Eip7702Args {
   contractAddress: `0x${string}`;
   quantity: number;
   buildCall: (minter: `0x${string}`) => { to: `0x${string}`; data: Hex; value: bigint };
+  osPayloads: Map<string, { to: `0x${string}`; data: Hex; value: bigint }> | null;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   gasFees: any;
   taskLog: (level: string, message: string) => Promise<void>;
 }
 
 async function runEip7702Bundle(a: Eip7702Args) {
-  const { prisma, task, chainName, rpcUrl, contractAddress, quantity, buildCall, gasFees, taskLog } = a;
+  const { prisma, task, chainName, rpcUrl, contractAddress, quantity, buildCall, osPayloads, gasFees, taskLog } = a;
   const taskId = task.id as string;
   const options = { chainName, rpcUrl } as const;
 
@@ -453,7 +491,18 @@ async function runEip7702Bundle(a: Eip7702Args) {
   const payFromSender = (task.valuePayer ?? "TX_SENDER") === "TX_SENDER";
   let data: Hex;
   let totalValue: bigint;
-  if (task.kind === "SEADROP") {
+  if (osPayloads) {
+    // OpenSea gated phase — each minter runs its own proof/signature calldata.
+    const entries = minters.map((m) => {
+      const p = osPayloads.get(m.toLowerCase());
+      if (!p) throw new Error(`No OpenSea payload for ${m}.`);
+      return { minter: m, valueWei: p.value, data: p.data };
+    });
+    const target = osPayloads.get(minters[0].toLowerCase())!.to; // SeaDrop address
+    const built = buildOrchestrateCallMultiCalldata({ target, entries, payFromSender });
+    data = built.data;
+    totalValue = built.totalValue;
+  } else if (task.kind === "SEADROP") {
     const built = buildOrchestrateSeaDropCalldata({
       minters,
       nftContract: contractAddress,
