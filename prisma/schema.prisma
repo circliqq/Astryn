@@ -1016,3 +1016,59 @@ model BundleMintLog {
 
   @@index([bundleMintTaskId, createdAt])
 }
+
+// ── Live Drop Scanner ───────────────────────────────────────────────────────
+// Auto-discovers collections about to mint (on-chain SeaDrop events + OpenSea
+// enrichment) and scores them for scam risk. Global feed (not per-user).
+
+enum DropRisk {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+model ScannedDrop {
+  id              String    @id @default(uuid())
+  chain           Network
+  contractAddress String
+  slug            String?
+  name            String?
+  imageUrl        String?
+  source          String    @default("onchain") // onchain | opensea | both
+  publicStartTime DateTime?
+  publicEndTime   DateTime?
+  publicPriceWei  String?
+  maxPerWallet    Int?
+  supply          Int?
+  maxSupply       Int?
+  symbol          String?
+  holders         Int?
+  floorEth        String?
+  topOfferEth     String?
+  volume24hEth    String?
+  salesCount      Int?
+  mints5m         Int       @default(0)
+  minters5m       Int       @default(0)
+  deployedAt      DateTime?
+  verified        Boolean   @default(false)
+  hasTwitter      Boolean   @default(false)
+  hasDiscord      Boolean   @default(false)
+  hasWebsite      Boolean   @default(false)
+  riskScore       Int       @default(50)
+  riskLevel       DropRisk  @default(MEDIUM)
+  riskFlags       Json      @default("[]")
+  status          String    @default("upcoming") // upcoming | live | ended
+  firstSeenAt     DateTime  @default(now())
+  lastSeenAt      DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([contractAddress, chain])
+  @@index([status, publicStartTime])
+  @@index([riskScore])
+}
+
+model ScannerCursor {
+  chain     Network  @id
+  lastBlock String
+  updatedAt DateTime @updatedAt
+}

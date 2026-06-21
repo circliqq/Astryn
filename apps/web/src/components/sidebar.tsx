@@ -30,6 +30,7 @@ const NAV_GROUPS: NavGroup[] = [
     defaultOpen: true,
     items: [
       { href: "/scanner",           label: "Scanner",              icon: Radar          },
+      { href: "/live-scanner",      label: "Live Scanner",         icon: Activity       },
       { href: "/mint-tasks",        label: "Mint Tasks",           icon: ListTodo       },
       { href: "/direct-mint",       label: "Direct Mint",          icon: Puzzle         },
       { href: "/bundle-mint",       label: "Bundle Mint",          icon: Layers         },

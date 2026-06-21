@@ -14,11 +14,13 @@ import { processSniperWatch } from "./processors/sniper.processor.js";
 import { processNotification } from "./processors/notifications.processor.js";
 import { processDirectMintJob } from "./processors/direct-mint.processor.js";
 import { processBundleMintJob } from "./processors/bundle-mint.processor.js";
+import { scanDrops } from "./processors/drop-scanner.processor.js";
 
 const WORKER_HEARTBEAT_KEY = "mint-copilot:scheduler:worker-heartbeat";
 const WORKER_HEARTBEAT_INTERVAL_MS = 10_000;
 const WORKER_HEARTBEAT_TTL_SECONDS = 30;
 const MINT_ALERT_CHECK_INTERVAL_MS = 60_000;
+const DROP_SCANNER_INTERVAL_MS = 60_000;
 
 loadRootEnv();
 
@@ -69,6 +71,10 @@ const workers = [
     connection,
     concurrency: 2,
   }),
+  new Worker("scanner-queue", () => scanDrops(prisma), {
+    connection,
+    concurrency: 1,
+  }),
 ];
 
 for (const queueName of [
@@ -80,6 +86,7 @@ for (const queueName of [
   "notifications-queue",
   "direct-mint-queue",
   "bundle-mint-queue",
+  "scanner-queue",
 ]) {
   const events = new QueueEvents(queueName, { connection });
   events.on("failed", ({ jobId, failedReason }) =>
@@ -121,10 +128,18 @@ const mintAlertInterval = setInterval(() => {
 }, MINT_ALERT_CHECK_INTERVAL_MS);
 mintAlertInterval.unref();
 
+// Live drop scanner — auto-discover upcoming/live mints on a timer.
+void scanDrops(prisma).catch((error) => logger.warn({ error }, "drop scan failed"));
+const dropScannerInterval = setInterval(() => {
+  void scanDrops(prisma).catch((error) => logger.warn({ error }, "drop scan failed"));
+}, DROP_SCANNER_INTERVAL_MS);
+dropScannerInterval.unref();
+
 async function shutdown() {
   logger.info("worker shutting down");
   clearInterval(heartbeatInterval);
   clearInterval(mintAlertInterval);
+  clearInterval(dropScannerInterval);
   await Promise.all(workers.map((worker) => worker.close()));
   await notificationsQueue.close();
   await prisma.$disconnect();

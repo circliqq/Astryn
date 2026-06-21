@@ -1,0 +1,11 @@
+-- AlterTable
+ALTER TABLE "ScannedDrop" ADD COLUMN "maxSupply" INTEGER;
+ALTER TABLE "ScannedDrop" ADD COLUMN "symbol" TEXT;
+ALTER TABLE "ScannedDrop" ADD COLUMN "holders" INTEGER;
+ALTER TABLE "ScannedDrop" ADD COLUMN "floorEth" TEXT;
+ALTER TABLE "ScannedDrop" ADD COLUMN "topOfferEth" TEXT;
+ALTER TABLE "ScannedDrop" ADD COLUMN "volume24hEth" TEXT;
+ALTER TABLE "ScannedDrop" ADD COLUMN "salesCount" INTEGER;
+ALTER TABLE "ScannedDrop" ADD COLUMN "mints5m" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "ScannedDrop" ADD COLUMN "minters5m" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "ScannedDrop" ADD COLUMN "deployedAt" TIMESTAMP(3);

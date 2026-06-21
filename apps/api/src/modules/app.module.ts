@@ -36,6 +36,7 @@ import { WhitelistCheckerModule } from "./domains/whitelist-checker.module.js";
 import { EventsModule } from "./events/events.module.js";
 import { DirectMintModule } from "./domains/direct-mint.module.js";
 import { BundleMintModule } from "./domains/bundle-mint.module.js";
+import { DropScannerModule } from "./domains/drop-scanner.module.js";
 import { TraderTrackerModule } from "./domains/trader-tracker.module.js";
 
 @Module({
@@ -77,6 +78,7 @@ import { TraderTrackerModule } from "./domains/trader-tracker.module.js";
     SupportModule,
     DirectMintModule,
     BundleMintModule,
+    DropScannerModule,
     TraderTrackerModule,
   ]
 })

@@ -180,6 +180,93 @@ export class OpenSeaClient {
     };
   }
 
+  /**
+   * Market snapshot for the scanner: floor, top offer, 24h volume, total sales,
+   * and holder count. Best-effort — missing fields come back undefined.
+   */
+  async getCollectionMarket(slug: string): Promise<{
+    floorEth?: string;
+    topOfferEth?: string;
+    volume24hEth?: string;
+    salesCount?: number;
+    holders?: number;
+  }> {
+    let stats: CollectionMarketStats | undefined;
+    try {
+      stats = await this.getCollectionStats(slug);
+    } catch {
+      stats = undefined;
+    }
+
+    let salesCount: number | undefined;
+    let holders: number | undefined;
+    try {
+      const data = await this.request<Record<string, unknown>>(`/collections/${slug}/stats`);
+      const total = (data.total as Record<string, unknown> | undefined) ?? {};
+      const sales = Number(total.sales ?? data.total_sales ?? (data as Record<string, unknown>).sales);
+      if (Number.isFinite(sales)) salesCount = sales;
+      const owners = Number(total.num_owners ?? (data as Record<string, unknown>).num_owners);
+      if (Number.isFinite(owners)) holders = owners;
+    } catch {
+      /* ignore */
+    }
+
+    return {
+      floorEth: stats?.floorPriceEth,
+      topOfferEth: stats?.bestOfferEth,
+      volume24hEth: stats?.oneDayVolumeEth,
+      salesCount,
+      holders,
+    };
+  }
+
+  /** Resolve an OpenSea collection slug from a contract address (or null). */
+  async slugByContract(
+    contractAddress: string,
+    chain: "ethereum" | "base",
+  ): Promise<string | null> {
+    try {
+      const data = await this.request<Record<string, unknown>>(
+        `/chain/${chain}/contract/${contractAddress}`,
+      );
+      return typeof data.collection === "string" ? data.collection : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Trust signals for scam scoring: OpenSea safelist/verified status + whether
+   * the collection has social links (Twitter / Discord / website).
+   */
+  async getCollectionTrust(slug: string): Promise<{
+    verified: boolean;
+    hasTwitter: boolean;
+    hasDiscord: boolean;
+    hasWebsite: boolean;
+    safelistStatus?: string;
+    supply?: number;
+    name?: string;
+    imageUrl?: string;
+  }> {
+    const data = await this.request<Record<string, unknown>>(`/collections/${slug}`);
+    const safelist = String(
+      data.safelist_status ?? data.safelist_request_status ?? "",
+    ).toLowerCase();
+    const verified = ["verified", "approved"].includes(safelist);
+    const str = (v: unknown) => (typeof v === "string" && v.trim().length > 0 ? v.trim() : undefined);
+    return {
+      verified,
+      hasTwitter: Boolean(str(data.twitter_username)),
+      hasDiscord: Boolean(str(data.discord_url)),
+      hasWebsite: Boolean(str(data.project_url) ?? str(data.external_url)),
+      safelistStatus: safelist || undefined,
+      supply: Number(data.total_supply ?? 0) || undefined,
+      name: str(data.name),
+      imageUrl: str(data.image_url),
+    };
+  }
+
   async getCollectionStats(slug: string): Promise<CollectionMarketStats> {
     const [data, bestOfferEth] = await Promise.all([
       this.request<Record<string, unknown>>(`/collections/${slug}/stats`),
