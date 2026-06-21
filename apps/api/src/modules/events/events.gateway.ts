@@ -18,6 +18,9 @@ export type MintEventName =
   | "direct-mint.task.created"
   | "direct-mint.task.queued"
   | "direct-mint.task.canceled"
+  | "bundle-mint.task.created"
+  | "bundle-mint.task.queued"
+  | "bundle-mint.task.canceled"
   | "trader.purchase";
 
 @WebSocketGateway({ cors: true, namespace: "/events" })

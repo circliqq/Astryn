@@ -12,7 +12,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { Queue } from "bullmq";
-import { type Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import {
   IsArray,
   IsIn,
