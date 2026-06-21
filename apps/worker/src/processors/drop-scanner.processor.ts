@@ -57,16 +57,14 @@ export async function scanDrops(prisma: PrismaClient): Promise<{ found: number }
   const openSea = new OpenSeaClient({ apiKey: process.env.OPENSEA_API_KEY ?? "" });
 
   for (const { network, chainName } of CHAINS) {
-    const rpcUrl = rpcUrlFor(chainName);
-    if (!rpcUrl) {
-      logger.warn({ chainName }, "drop-scanner: no RPC configured, skipping chain");
+    const picked = await pickClient(prisma, chainName);
+    if (!picked) {
+      logger.warn({ chainName }, "drop-scanner: all RPCs failed, skipping chain");
       continue;
     }
+    const { client, latest } = picked;
 
     try {
-      const client = createMintPublicClient({ chainName, rpcUrl });
-      const latest = await client.getBlockNumber();
-
       const cursor = await prisma.scannerCursor.findUnique({ where: { chain: network } });
       let fromBlock = cursor
         ? BigInt(cursor.lastBlock) + 1n
@@ -221,18 +219,17 @@ async function refreshLiveMetrics(prisma: PrismaClient, openSea: OpenSeaClient):
   }
 
   const clients = new Map<string, ScanClient>();
-  const clientFor = (chainName: "ethereum" | "base"): ScanClient | null => {
+  const clientFor = async (chainName: "ethereum" | "base"): Promise<ScanClient | null> => {
     if (clients.has(chainName)) return clients.get(chainName)!;
-    const rpcUrl = rpcUrlFor(chainName);
-    if (!rpcUrl) return null;
-    const c = createMintPublicClient({ chainName, rpcUrl });
-    clients.set(chainName, c);
-    return c;
+    const picked = await pickClient(prisma, chainName);
+    if (!picked) return null;
+    clients.set(chainName, picked.client);
+    return picked.client;
   };
 
   for (const d of live) {
     const chainName = d.chain === "BASE" ? "base" : "ethereum";
-    const client = clientFor(chainName);
+    const client = await clientFor(chainName);
     if (!client) continue;
     const contract = getAddress(d.contractAddress);
     const vel = await computeVelocity(client, chainName, contract);
@@ -505,13 +502,49 @@ async function upsertCursor(prisma: PrismaClient, chain: Network, block: bigint)
   });
 }
 
-function rpcUrlFor(network: "base" | "ethereum"): string | undefined {
+function rpcUrlsFor(network: "base" | "ethereum"): string[] {
   const prefix = network === "base" ? "BASE" : "ETH";
-  return (
-    process.env[`${prefix}_RPC_PRIMARY`] ??
-    process.env[`${prefix}_RPC_BACKUP_1`] ??
-    process.env[`${prefix}_RPC_BACKUP_2`]
-  );
+  return [
+    process.env[`${prefix}_RPC_PRIMARY`],
+    process.env[`${prefix}_RPC_BACKUP_1`],
+    process.env[`${prefix}_RPC_BACKUP_2`],
+  ].filter(Boolean) as string[];
+}
+
+/**
+ * Try env RPCs first, then the user's enabled RPC endpoints from the DB
+ * (the same ones shown in the dashboard's RPC Health), and return the first
+ * client that responds — so a dead primary never blocks the scanner.
+ */
+async function pickClient(
+  prisma: PrismaClient,
+  chainName: "ethereum" | "base",
+): Promise<{ client: ScanClient; latest: bigint } | null> {
+  const network: Network = chainName === "base" ? "BASE" : "ETHEREUM";
+  let dbUrls: string[] = [];
+  try {
+    const eps = await prisma.rpcEndpoint.findMany({
+      where: { network, enabled: true },
+      orderBy: { priority: "asc" },
+      select: { url: true },
+      take: 8,
+    });
+    dbUrls = eps.map((e) => e.url);
+  } catch {
+    /* ignore */
+  }
+
+  const urls = [...new Set([...rpcUrlsFor(chainName), ...dbUrls])];
+  for (const rpcUrl of urls) {
+    try {
+      const client = createMintPublicClient({ chainName, rpcUrl });
+      const latest = await client.getBlockNumber();
+      return { client, latest };
+    } catch {
+      // Try the next RPC.
+    }
+  }
+  return null;
 }
 
 function errMsg(error: unknown): string {
