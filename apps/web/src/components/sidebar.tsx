@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   Activity, BarChart3, Bell, BellRing, Calculator, ChevronDown,
-  ClipboardCheck, Coins, Crosshair, Flame, Home, Layers, ListTodo,
+  ClipboardCheck, ClipboardList, Coins, Crosshair, Flame, Home, Layers, ListTodo,
   PieChart, Puzzle, Radar, ScrollText, SendHorizonal, Settings, ShieldCheck,
   UserSearch, Vault, Wallet, X,
 } from "lucide-react";
@@ -35,6 +35,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/direct-mint",       label: "Direct Mint",          icon: Puzzle         },
       { href: "/bundle-mint",       label: "Bundle Mint",          icon: Layers         },
       { href: "/whitelist-checker", label: "Whitelist Checker",    icon: ClipboardCheck },
+      { href: "/bulk-forms",        label: "Bulk Forms",           icon: ClipboardList  },
       { href: "/gas-calculator",    label: "Gas Calculator",       icon: Calculator     },
     ],
   },

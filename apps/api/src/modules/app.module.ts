@@ -11,6 +11,7 @@ import { DistributorModule } from "./domains/distributor.module.js";
 import { AuthModule } from "./auth/auth.module.js";
 import { CollectionsModule } from "./domains/collections.module.js";
 import { FundingModule } from "./domains/funding.module.js";
+import { FormToolsModule } from "./domains/form-tools.module.js";
 import { GasModule } from "./domains/gas.module.js";
 import { HealthModule } from "./domains/health.module.js";
 import { LogsModule } from "./domains/logs.module.js";
@@ -54,6 +55,7 @@ import { TraderTrackerModule } from "./domains/trader-tracker.module.js";
     OpenSeaModule,
     WalletHealthModule,
     FundingModule,
+    FormToolsModule,
     SimulationModule,
     ReadinessModule,
     MintTasksModule,
