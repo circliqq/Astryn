@@ -1006,6 +1006,7 @@ fragment currencyIdentifier on ContractIdentifier {
     const buildBody = (idx?: number) =>
       JSON.stringify({
         wallet_address: walletAddress,
+        minter: walletAddress,   // OpenSea requires both wallet_address and minter
         quantity,
         ...(phaseType ? { phase_type: phaseType } : {}),
         ...(idx != null ? { stage_index: idx } : {}),

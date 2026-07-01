@@ -1498,8 +1498,13 @@ async function loadMintPayload(
     // will reject; fall back to a SeaDrop v1 placeholder so the wallet can be
     // pre-signed before T=0. The payloadRefresher in waitWithRollingSimulation
     // will fetch the real payload at phase open and re-sign before broadcast.
+    // 5s timeout — same hang-prevention as FCFS below.
+    const publicFastFailMs = numberEnv("MINT_FCFS_PAYLOAD_TIMEOUT_MS", 5_000);
     try {
-      return await openSea.getMintPayload(collection.slug, walletAddress, quantity, "public");
+      return await Promise.race([
+        openSea.getMintPayload(collection.slug, walletAddress, quantity, "public"),
+        delay(publicFastFailMs).then(() => { throw new Error("PUBLIC payload check timed out"); }),
+      ]);
     } catch {
       // Phase not open yet or API unavailable — use SeaDrop v1 for pre-signing.
     }
@@ -1511,13 +1516,35 @@ async function loadMintPayload(
     });
   }
 
+  // ── FCFS fast-fail timeout ──────────────────────────────────────────────
+  // OpenSea never has FCFS payload available before phase open — the API call
+  // will either error quickly (400/404) or hang silently for up to 90s waiting
+  // for a response that never comes.  Race with a short timeout so wallet prep
+  // completes immediately rather than blocking until T-1s.
+  //
+  // Default 5s is generous — a fast 400 comes back in <500ms. If the phase IS
+  // open early and OpenSea has the payload ready, 5s is more than enough.
+  // For GTD/ALLOWLIST we skip this timeout so early payload release is caught.
+  const normalizedPhase = phaseType.toUpperCase();
+  const fcfsFastFailMs = normalizedPhase === "FCFS"
+    ? numberEnv("MINT_FCFS_PAYLOAD_TIMEOUT_MS", 5_000)
+    : null;
+
   try {
-    return await openSea.getMintPayload(
+    const apiCall = openSea.getMintPayload(
       collection.slug,
       walletAddress,
       quantity,
       toOpenSeaPhase(phaseType),
     );
+    return await (fcfsFastFailMs != null
+      ? Promise.race([
+          apiCall,
+          delay(fcfsFastFailMs).then(() => {
+            throw new Error(`FCFS initial payload check timed out after ${fcfsFastFailMs}ms — using placeholder`);
+          }),
+        ])
+      : apiCall);
   } catch (error) {
     const msUntilOpen = targetAt.getTime() - Date.now();
     if (msUntilOpen <= 1_000) throw error;
@@ -1528,7 +1555,6 @@ async function loadMintPayload(
     // immediately. The payloadRefresher in waitWithRollingSimulation will
     // fetch the real FCFS calldata at T=0 and re-sign before broadcast —
     // achieving near-zero latency on the opening block.
-    const normalizedPhase = phaseType.toUpperCase();
     if (normalizedPhase === "FCFS") {
       await warn(
         `FCFS phase — using placeholder payload for pre-signing. Real calldata will be fetched at T=0 via payloadRefresher.`,
