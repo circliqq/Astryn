@@ -256,6 +256,9 @@ export async function executeMintTask(
     const openSea = new OpenSeaClient({ apiKey: env("OPENSEA_API_KEY") });
     const network = task.collection.chain === "BASE" ? "base" : "ethereum";
     const rpcUrls = rpcUrlsFor(network);
+
+    // General-purpose pool — used for health checks, simulations, gas estimation,
+    // receipt polling, and block-number reads. NOT used for the actual broadcast.
     const pool = new RpcPool(
       rpcUrls.map((url, index) => ({
         id: `${network}-${index}`,
@@ -265,9 +268,30 @@ export async function executeMintTask(
         priority: index + 1,
       })),
       {
-        // Dynamic per-endpoint timeout: ping × multiplier, clamped to [min, max].
-        // e.g. Quiknode 25ms ping → 250ms timeout, Chainstack 76ms → 760ms timeout.
-        // Falls back to MINT_BROADCAST_TIMEOUT_MS only if no ping data yet.
+        dynamicTimeoutMultiplier: numberEnv("MINT_BROADCAST_TIMEOUT_MULTIPLIER", 10),
+        dynamicTimeoutMinMs: numberEnv("MINT_BROADCAST_TIMEOUT_MIN_MS", 300),
+        dynamicTimeoutMaxMs: numberEnv("MINT_BROADCAST_TIMEOUT_MAX_MS", 1_200),
+        broadcastTimeoutMs: numberEnv("MINT_BROADCAST_TIMEOUT_MS", 800),
+      },
+    );
+
+    // Broadcast-only pool — dRPC (or any ETH_BROADCAST_RPC / BASE_BROADCAST_RPC)
+    // used exclusively for eth_sendRawTransaction at T=0.
+    // Falls back to the general pool if no broadcast-specific RPC is configured.
+    const broadcastRpcKey = network === "base" ? "BASE_BROADCAST_RPC" : "ETH_BROADCAST_RPC";
+    const broadcastRpcUrls = [
+      process.env[broadcastRpcKey],
+      ...rpcUrls,                   // fallback: general RPCs
+    ].filter(Boolean) as string[];
+    const broadcastPool = new RpcPool(
+      broadcastRpcUrls.map((url, index) => ({
+        id: `${network}-broadcast-${index}`,
+        name: index === 0 ? "dRPC (broadcast)" : `Broadcast Backup ${index}`,
+        url,
+        chainName: network,
+        priority: index + 1,
+      })),
+      {
         dynamicTimeoutMultiplier: numberEnv("MINT_BROADCAST_TIMEOUT_MULTIPLIER", 10),
         dynamicTimeoutMinMs: numberEnv("MINT_BROADCAST_TIMEOUT_MIN_MS", 300),
         dynamicTimeoutMaxMs: numberEnv("MINT_BROADCAST_TIMEOUT_MAX_MS", 1_200),
@@ -766,7 +790,7 @@ export async function executeMintTask(
           ).catch(() => undefined);
 
           const [broadcasts] = await Promise.all([
-            broadcastMintTransaction(pool, network, preparedMint.signedTx),
+            broadcastMintTransaction(broadcastPool, network, preparedMint.signedTx),
             // Flashbots bundle — targets N+1/N+2/N+3 specifically (ETH only).
             // minTimestamp = phase open unix seconds → bundle won't land before the drop opens.
             isEthereum && flashbotsAuthKey && currentBlockNumber != null
@@ -1176,7 +1200,7 @@ export async function executeMintTask(
 
                 // Rebroadcast bumped tx to all channels in parallel.
                 const [bumpBroadcasts] = await Promise.all([
-                  broadcastMintTransaction(pool, network, bumpedSignedTx),
+                  broadcastMintTransaction(broadcastPool, network, bumpedSignedTx),
                   network === "ethereum" && process.env["ETH_BUILDERS_ENABLED"]
                     ? sendToFreeBuilders(bumpedSignedTx).catch(() => undefined)
                     : Promise.resolve(),
