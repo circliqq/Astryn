@@ -1485,7 +1485,7 @@ async function loadMintPayload(
     // pollCutoffMs                   — stop polling this far before open so a
     //                                  slow API call cannot bleed into T=0.
     //                                  Set to pollInterval + 500ms as buffer.
-    const pollIntervalMs = numberEnv("MINT_PAYLOAD_POLL_INTERVAL_MS", 3_000);
+    const pollIntervalMs = numberEnv("MINT_PAYLOAD_POLL_INTERVAL_MS", 6_000);
     const pollCutoffMs   = pollIntervalMs + 500;
     const openSeaPhaseStr = toOpenSeaPhase(phaseType);
 
@@ -1498,6 +1498,9 @@ async function loadMintPayload(
     // connection cannot push execution past T=0.
     const pollAttemptTimeoutMs = Math.min(pollIntervalMs - 200, 4_800);
 
+    // Track consecutive rate-limit hits so we can back off and preserve quota for T=0.
+    let rateLimitBackoffUntil = 0;
+
     while (Date.now() < targetAt.getTime() - pollCutoffMs) {
       const msLeft = targetAt.getTime() - Date.now() - pollCutoffMs;
       if (msLeft <= 0) break;
@@ -1506,6 +1509,9 @@ async function loadMintPayload(
       await delay(Math.min(pollIntervalMs, msLeft));
 
       if (Date.now() >= targetAt.getTime() - pollCutoffMs) break;
+
+      // Skip this poll if we're in a rate-limit backoff window.
+      if (Date.now() < rateLimitBackoffUntil) continue;
 
       try {
         // Race the API call against a hard timeout so a slow response cannot
@@ -1523,12 +1529,16 @@ async function loadMintPayload(
           return polled;
         }
       } catch (pollErr) {
-        // Payload not yet available — continue polling.
-        // Log 4xx errors so eligibility failures are visible in the UI during polling.
         const pollMsg = pollErr instanceof Error ? pollErr.message : String(pollErr);
-        if (pollMsg.includes("400") || pollMsg.includes("403") || pollMsg.includes("401")) {
+
+        if (pollMsg.includes("rate limit") || pollMsg.includes("429")) {
+          // Back off for 20s to preserve quota for the T=0 broadcast attempt.
+          rateLimitBackoffUntil = Date.now() + 20_000;
+          await warn(`OpenSea rate limit hit during polling — pausing 20s to protect T=0 attempt.`, { walletAddress });
+        } else if (pollMsg.includes("400") || pollMsg.includes("403") || pollMsg.includes("401")) {
           await warn(`Poll attempt rejected by OpenSea: ${pollMsg.slice(0, 400)}`, { walletAddress });
         }
+        // Other errors (404, timeout) = payload not ready yet — continue silently.
       }
     }
     // ─────────────────────────────────────────────────────────────────────
