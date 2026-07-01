@@ -1708,7 +1708,7 @@ async function resolveGasLimit(
     return { gasLimit: simulation.estimatedGas, simulationFailed: false };
   } catch (error) {
     const msUntilOpen = targetAt.getTime() - Date.now();
-    const fallbackGasLimit = bigintEnv("MINT_FALLBACK_GAS_LIMIT", 350_000n);
+    const fallbackGasLimit = resolveFallbackGasLimit(request);
     await warn(
       msUntilOpen <= 500
         ? "Simulation is not accepted yet at scheduled open time; using fallback gas and waiting for grace retry."
@@ -1721,6 +1721,21 @@ async function resolveGasLimit(
     );
     return { gasLimit: fallbackGasLimit, simulationFailed: true };
   }
+}
+
+function resolveFallbackGasLimit(request: {
+  to: `0x${string}`;
+  data: `0x${string}`;
+}) {
+  const isSeaDropPublicMint =
+    request.to.toLowerCase() === SEA_DROP_ADDRESS.toLowerCase() &&
+    request.data.toLowerCase().startsWith("0x161ac21f");
+
+  if (isSeaDropPublicMint) {
+    return bigintEnv("MINT_SEADROP_FALLBACK_GAS_LIMIT", 220_000n);
+  }
+
+  return bigintEnv("MINT_FALLBACK_GAS_LIMIT", 350_000n);
 }
 
 async function waitWithRollingSimulation(
