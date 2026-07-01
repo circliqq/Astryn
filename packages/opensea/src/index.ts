@@ -999,19 +999,56 @@ fragment currencyIdentifier on ContractIdentifier {
     slug: string,
     walletAddress: string,
     quantity: number,
-    phaseType?: MintPhaseType
+    phaseType?: MintPhaseType,
+    stageIndex?: number,
   ): Promise<MintPayload> {
-    const data = await this.request<Record<string, unknown>>(`/drops/${slug}/mint`, {
-      method: "POST",
-      body: JSON.stringify({
+    // Build the base body, optionally including a specific stage_index.
+    const buildBody = (idx?: number) =>
+      JSON.stringify({
         wallet_address: walletAddress,
         quantity,
         ...(phaseType ? { phase_type: phaseType } : {}),
-      })
-    });
-    const payload = mintPayloadFrom(data);
-    if (!payload) throw new Error("OpenSea mint response did not include transaction data.");
-    return payload;
+        ...(idx != null ? { stage_index: idx } : {}),
+      });
+
+    // First attempt: use whatever stageIndex was passed in (may be undefined).
+    let lastError: unknown;
+    try {
+      const data = await this.request<Record<string, unknown>>(`/drops/${slug}/mint`, {
+        method: "POST",
+        body: buildBody(stageIndex),
+      });
+      const payload = mintPayloadFrom(data);
+      if (payload) return payload;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Only retry stage indices on a 400 that looks like a missing-field error.
+      // 404 = phase not open / wallet not eligible → don't probe indices.
+      const is400 = msg.includes(" 400");
+      if (!is400 || stageIndex != null) throw err;
+      lastError = err;
+    }
+
+    // Second attempt: OpenSea returned 400 and no explicit stageIndex was
+    // provided. Probe stage_index 0–3 — multi-stage drops (GTD + public) require
+    // this field and it is not stored in the DB yet.
+    for (let idx = 0; idx <= 3; idx++) {
+      try {
+        const data = await this.request<Record<string, unknown>>(`/drops/${slug}/mint`, {
+          method: "POST",
+          body: buildBody(idx),
+        });
+        const payload = mintPayloadFrom(data);
+        if (payload) return payload;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        // Stop probing on non-400 errors (rate limit, 5xx, etc.)
+        if (!msg.includes(" 400")) throw err;
+        lastError = err;
+      }
+    }
+
+    throw lastError ?? new Error("OpenSea mint response did not include transaction data.");
   }
 
   private async request<T>(path: string, init?: RequestInit, timeoutMs = 8_000): Promise<T> {
@@ -1095,7 +1132,7 @@ fragment currencyIdentifier on ContractIdentifier {
 async function errorDetails(response: Response) {
   try {
     const body = await response.text();
-    return body ? body.slice(0, 240) : response.statusText;
+    return body ? body.slice(0, 800) : response.statusText;
   } catch {
     return response.statusText;
   }

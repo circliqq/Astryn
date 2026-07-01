@@ -1522,8 +1522,13 @@ async function loadMintPayload(
           );
           return polled;
         }
-      } catch {
+      } catch (pollErr) {
         // Payload not yet available — continue polling.
+        // Log 4xx errors so eligibility failures are visible in the UI during polling.
+        const pollMsg = pollErr instanceof Error ? pollErr.message : String(pollErr);
+        if (pollMsg.includes("400") || pollMsg.includes("403") || pollMsg.includes("401")) {
+          await warn(`Poll attempt rejected by OpenSea: ${pollMsg.slice(0, 400)}`, { walletAddress });
+        }
       }
     }
     // ─────────────────────────────────────────────────────────────────────

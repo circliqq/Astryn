@@ -32,6 +32,8 @@ FILES=(
   "apps/worker/src/processors/direct-mint.processor.ts"
   "packages/blockchain/src/index.ts"
   "packages/rpc-pool/src/index.ts"
+  "packages/opensea/src/index.ts"
+  "packages/opensea/dist/index.d.ts"
 )
 
 for FILE in "${FILES[@]}"; do
