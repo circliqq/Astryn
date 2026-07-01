@@ -9,7 +9,28 @@ import {
   signTransaction,
   simulateTx,
   waitForReceipt,
+  analyzeContract,
 } from "@mint-copilot/blockchain";
+
+// ── SeaDrop v1 detection cache ────────────────────────────────────────────────
+// Keyed by lowercase contractAddress. Avoids repeated RPC calls for the same
+// collection across wallets / retries within one worker process.
+const seaDropV1Cache = new Map<string, boolean>();
+
+async function isSeaDropV1Contract(contractAddress: string, rpcUrl: string): Promise<boolean> {
+  const key = contractAddress.toLowerCase();
+  const cached = seaDropV1Cache.get(key);
+  if (cached !== undefined) return cached;
+  try {
+    const analysis = await analyzeContract({ chainName: "ethereum", rpcUrl }, contractAddress);
+    const result = analysis.contractType === "SeaDrop";
+    seaDropV1Cache.set(key, result);
+    return result;
+  } catch {
+    seaDropV1Cache.set(key, false);
+    return false;
+  }
+}
 import {
   applyGasGuardian,
   buildBumpedFees,
@@ -625,19 +646,30 @@ export async function executeMintTask(
     // (MINT_SIM_LAST_CHANCE_TIMEOUT_MS). If still failing they are skipped —
     // no broadcast, no gas wasted.  Wallets that already passed simulation
     // skip all of this and broadcast immediately at T=0 with zero delay.
-    // For PUBLIC phase, provide a payload refresher so the rolling simulation
-    // can fetch the correct calldata from OpenSea once the phase opens.
-    // This handles collections that use a non-SeaDrop-v1 drop contract where
-    // the pre-built SeaDrop v1 payload would always revert.
-    const payloadRefresher = task.phaseType === "PUBLIC"
-      ? async (walletAddress: string) =>
-          openSea.getMintPayload(
-            task.collection.slug,
-            walletAddress,
-            task.mintQuantity ?? 1,
-            "public",
-          )
-      : undefined;
+    // For PUBLIC phase on SeaDrop v1 contracts, the pre-built payload IS the
+    // correct calldata — no OpenSea API call needed at T=0.
+    // For non-SeaDrop-v1 PUBLIC and all FCFS phases, a refresher fetches the
+    // real calldata from OpenSea at T=0 so the tx is re-signed before broadcast.
+    const contractIsSeaDropV1 = task.phaseType === "PUBLIC" && task.collection.contractAddress
+      ? await isSeaDropV1Contract(task.collection.contractAddress, primary.url).catch(() => false)
+      : false;
+
+    if (contractIsSeaDropV1) {
+      await log(prisma, task.id, "info",
+        "SeaDrop v1 contract detected — PUBLIC mint will broadcast at T=0 with no OpenSea API latency.");
+    }
+
+    const payloadRefresher = contractIsSeaDropV1
+      ? undefined  // SeaDrop v1 PUBLIC: pre-built payload is already correct
+      : (task.phaseType === "PUBLIC" || task.phaseType === "FCFS")
+        ? async (walletAddress: string) =>
+            openSea.getMintPayload(
+              task.collection.slug,
+              walletAddress,
+              task.mintQuantity ?? 1,
+              toOpenSeaPhase(task.phaseType),
+            )
+        : undefined;
 
     const simulationVerified = await waitWithRollingSimulation(
       prisma,
@@ -1466,11 +1498,31 @@ async function loadMintPayload(
     const msUntilOpen = targetAt.getTime() - Date.now();
     if (msUntilOpen <= 1_000) throw error;
 
-    // ── Pre-open payload polling ──────────────────────────────────────────
+    // ── Pre-open payload strategy ─────────────────────────────────────────
+    // FCFS phases: OpenSea only releases the payload at T=0 (no pre-computation).
+    // Return a SeaDrop v1 placeholder NOW so the wallet can be pre-signed
+    // immediately. The payloadRefresher in waitWithRollingSimulation will
+    // fetch the real FCFS calldata at T=0 and re-sign before broadcast —
+    // achieving near-zero latency on the opening block.
+    const normalizedPhase = phaseType.toUpperCase();
+    if (normalizedPhase === "FCFS") {
+      await warn(
+        `FCFS phase — using placeholder payload for pre-signing. Real calldata will be fetched at T=0 via payloadRefresher.`,
+        { targetAt: targetAt.toISOString() },
+      );
+      return createSeaDropPublicMintPayload({
+        nftContract: collection.contractAddress as `0x${string}`,
+        minter: walletAddress as `0x${string}`,
+        mintPriceWei: resolveMintPriceWei(collection, phaseType, targetAt),
+        quantity,
+      });
+    }
+
+    // GTD / ALLOWLIST — poll until payload releases early or T=0.
     // Instead of sleeping until T=0 and retrying once (old behaviour), we
     // poll OpenSea every MINT_PAYLOAD_POLL_INTERVAL_MS while there is still
     // time before phase open.  If OpenSea releases the payload early — common
-    // for FCFS/GTD phases where the signed mint data becomes available a few
+    // for GTD phases where the signed mint data becomes available a few
     // seconds before the phase timestamp — we return immediately.
     //
     // This matters because a wallet that finishes prep BEFORE T=0:
