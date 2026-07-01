@@ -1797,12 +1797,47 @@ async function waitWithRollingSimulation(
     ? Math.max(Math.round(primaryLatencyMs * 4) + 100, refreshLeadMinMs)
     : numberEnv("MINT_REFRESH_LEAD_MS", 300);
   let preRefreshed: PreparedMint[] | null = null;
+  // Tracks wallets whose mintPayloadForRetry was updated with REAL calldata
+  // by the pre-refresh loop (not still a SeaDrop v1 placeholder). Used to
+  // skip redundant OpenSea API calls in the last-chance handler at T=0.
+  const preRefreshPayloadUpdated = new Set<string>();
 
   const preRefreshLoop = async () => {
     const refreshAt = new Date(targetAt.getTime() - refreshLeadMs);
     if (refreshAt.getTime() > Date.now()) {
       await sleepUntil(refreshAt);
     }
+
+    // ── Pre-refresh payload fetch (FCFS / non-SeaDrop PUBLIC) ─────────────
+    // Call payloadRefresher NOW — at T-refreshLeadMs — before re-signing.
+    // This overlaps the OpenSea API round-trip with the remaining sleep time
+    // so the signed tx uses real calldata, not a SeaDrop v1 placeholder.
+    //
+    // OpenSea often releases FCFS payloads a few hundred ms before phase open;
+    // even when it doesn't, a failed call here is silent — the last-chance
+    // handler at T=0 will retry with the phase now live and give it 1.5s.
+    if (payloadRefresher) {
+      await Promise.all(
+        prepared.map(async (p) => {
+          try {
+            const freshPayload = await payloadRefresher(p.walletAddress);
+            p.mintPayloadForRetry = freshPayload;
+            preRefreshPayloadUpdated.add(p.taskWalletId);
+            void log(
+              prisma,
+              mintTaskId,
+              "info",
+              `Pre-refresh: real calldata for ${shortAddress(p.walletAddress)} obtained ${raceDelta(Date.now(), targetAt)} — re-signing with correct payload.`,
+              { walletId: p.walletId },
+            ).catch(() => undefined);
+          } catch {
+            // Phase not yet open or API error — last-chance at T=0 will retry.
+          }
+        }),
+      );
+    }
+    // ─────────────────────────────────────────────────────────────────────
+
     preRefreshed = await refreshSignatures(prisma, mintTaskId, prepared, options);
   };
 
@@ -1814,6 +1849,7 @@ async function waitWithRollingSimulation(
   //   finished in time  → preRefreshed is set, used at T=0 with zero delay
   //   still running     → preRefreshed stays null, sequential fallback runs
   //   threw             → same — falls back safely
+  //
   void preRefreshLoop().catch(() => undefined);
   await Promise.all([sleepUntil(targetAt), pollLoop()]);
   // ─────────────────────────────────────────────────────────────────────
@@ -1841,14 +1877,17 @@ async function waitWithRollingSimulation(
       resigned
         .filter((p) => stillFailing.has(p.taskWalletId))
         .map(async (p) => {
-          // If we have a payload refresher (e.g. OpenSea API), attempt to fetch
-          // a fresh payload now that the phase is open. This handles collections
-          // that use a different SeaDrop version — the API only returns valid
-          // calldata once the phase goes live.
-          // IMPORTANT: after updating the payload we also re-sign so that the
-          // broadcast TX uses the correct calldata, not the pre-signed SeaDrop v1
-          // placeholder. Without re-signing the on-chain TX would revert and waste gas.
-          if (payloadRefresher) {
+          // ── Last-chance payload refresh ────────────────────────────────
+          // Only needed when the pre-refresh loop didn't already obtain real
+          // calldata. If preRefreshPayloadUpdated contains this wallet, its
+          // mintPayloadForRetry (and signedTx via preRefreshed) already has
+          // the correct calldata — skip the redundant API call at T=0.
+          //
+          // When we DO need to refresh: give a generous 1.5s budget to cover
+          // OpenSea API latency (~200ms) + nonce RPC (~50ms) + sign (~5ms).
+          // The old 400ms total was too tight and caused placeholder broadcast.
+          if (payloadRefresher && !preRefreshPayloadUpdated.has(p.taskWalletId)) {
+            const payloadRefreshBudgetMs = numberEnv("MINT_PAYLOAD_REFRESH_TIMEOUT_MS", 1_500);
             try {
               await Promise.race([
                 (async () => {
@@ -1858,14 +1897,15 @@ async function waitWithRollingSimulation(
                   const resSigned = await refreshSignatures(prisma, mintTaskId, [p], options);
                   if (resSigned[0]) Object.assign(p, resSigned[0]);
                 })(),
-                delay(lastChanceTimeoutMs).then(() => {
-                  throw new Error("payload refresh + re-sign timeout");
+                delay(payloadRefreshBudgetMs).then(() => {
+                  throw new Error(`payload refresh + re-sign timeout after ${payloadRefreshBudgetMs}ms`);
                 }),
               ]);
             } catch {
               // Timed out or refresher failed — proceed with stored payload/signature.
             }
           }
+          // ───────────────────────────────────────────────────────────────
 
           try {
             await Promise.race([

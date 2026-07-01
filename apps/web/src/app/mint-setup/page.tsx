@@ -215,12 +215,19 @@ function MintSetupContent() {
     queryFn: () => apiFetch<Collection>(`/collections/${collectionId}`),
   });
 
-  const { data: gasQuote } = useQuery<GasQuote>({
+  const {
+    data: gasQuote,
+    isLoading: gasQuoteLoading,
+    isError: gasQuoteError,
+    refetch: refetchGasQuote,
+  } = useQuery<GasQuote>({
     queryKey: ["gas-current", collection?.chain],
     enabled: Boolean(collection),
     queryFn: () =>
       apiFetch<GasQuote>(`/gas/current?network=${(collection!.chain ?? "ethereum").toLowerCase()}`),
     refetchInterval: 15_000,
+    retry: 2,
+    retryDelay: 2_000,
   });
 
   // compatibleWallets + selectedPhase needed early for simulation query
@@ -1055,7 +1062,17 @@ function MintSetupContent() {
                   </div>
                   {!collection ? (
                     <p className="text-graphite-500">Select a collection to see gas estimate.</p>
-                  ) : !gasQuote ? (
+                  ) : gasQuoteError ? (
+                    <div className="flex items-center justify-between">
+                      <p className="text-red-400 text-[11px]">Gas fetch failed — RPC error.</p>
+                      <button
+                        onClick={() => void refetchGasQuote()}
+                        className="text-[11px] text-orange-400 underline hover:text-orange-300"
+                      >
+                        Retry
+                      </button>
+                    </div>
+                  ) : gasQuoteLoading || !gasQuote ? (
                     <p className="text-graphite-500">Fetching live gas…</p>
                   ) : gasRec ? (
                     <div className="space-y-1.5 text-graphite-300">

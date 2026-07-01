@@ -43,7 +43,12 @@ class GasController {
   @Get("current")
   async current(@Query("network") network: "base" | "ethereum" = "base") {
     const rpcUrl = this.config.getOrThrow<string>(network === "base" ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY");
-    const gas = await fetchCurrentGas({ chainName: network, rpcUrl });
+    const gas = await Promise.race([
+      fetchCurrentGas({ chainName: network, rpcUrl }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Gas fetch timed out after 5000ms")), 5_000)
+      ),
+    ]);
     return {
       baseFeePerGas: gas.baseFeePerGas.toString(),
       maxPriorityFeePerGas: gas.maxPriorityFeePerGas.toString(),
