@@ -1547,18 +1547,20 @@ async function loadMintPayload(
       : apiCall);
   } catch (error) {
     const msUntilOpen = targetAt.getTime() - Date.now();
-    if (msUntilOpen <= 1_000) throw error;
 
-    // ── Pre-open payload strategy ─────────────────────────────────────────
-    // FCFS phases: OpenSea only releases the payload at T=0 (no pre-computation).
-    // Return a SeaDrop v1 placeholder NOW so the wallet can be pre-signed
-    // immediately. The payloadRefresher in waitWithRollingSimulation will
-    // fetch the real FCFS calldata at T=0 and re-sign before broadcast —
-    // achieving near-zero latency on the opening block.
+    // ── FCFS placeholder — always, regardless of timing ───────────────────
+    // OpenSea only releases FCFS payload at T=0; before that it errors or
+    // hangs.  Use a SeaDrop v1 placeholder so the wallet can be pre-signed.
+    // The payloadRefresher in waitWithRollingSimulation fetches the real
+    // calldata at T=0 and re-signs before broadcast — works for both
+    // scheduled AND immediate mints (last-chance fires immediately for the
+    // latter).  Never rethrow for FCFS based on msUntilOpen: even when the
+    // phase is already open, a fast-fail timeout means the API is slow, not
+    // that the wallet is ineligible — let last-chance handle it.
     if (normalizedPhase === "FCFS") {
       await warn(
         `FCFS phase — using placeholder payload for pre-signing. Real calldata will be fetched at T=0 via payloadRefresher.`,
-        { targetAt: targetAt.toISOString() },
+        { targetAt: targetAt.toISOString(), msUntilOpen },
       );
       return createSeaDropPublicMintPayload({
         nftContract: collection.contractAddress as `0x${string}`,
@@ -1567,6 +1569,8 @@ async function loadMintPayload(
         quantity,
       });
     }
+
+    if (msUntilOpen <= 1_000) throw error;
 
     // GTD / ALLOWLIST — poll until payload releases early or T=0.
     // Instead of sleeping until T=0 and retrying once (old behaviour), we
