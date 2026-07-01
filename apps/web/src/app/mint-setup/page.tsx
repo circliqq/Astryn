@@ -1504,4 +1504,25 @@ function MintSetupContent() {
               </div>
             </Panel>
           </div>
- 
+        </div>
+      </form>
+
+      {/* Advanced Gas Modal */}
+      <AdvancedGasModal
+        open={gasModalOpen}
+        onClose={() => setGasModalOpen(false)}
+        onSave={handleModalSave}
+        initial={{
+          currency: advancedGas.gasBudgetCurrency,
+          budget: advancedGas.gasBudget,
+          spendingMode: advancedGas.spendingMode,
+          gasLimit: advancedGas.gasLimitUnits,
+        }}
+        ethUsdPrice={ethUsdPrice ?? null}
+        liveBaseGwei={gasRec?.liveBaseGwei ?? null}
+        phaseLabel={`${phaseType} STAGE`}
+        suggestedGasLimit={gasSim?.simulated ? gasSim.recommendedLimit : undefined}
+      />
+    </AppShell>
+  );
+}
