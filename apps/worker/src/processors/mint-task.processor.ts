@@ -1710,14 +1710,15 @@ async function resolveGasLimit(
     return { gasLimit: simulation.estimatedGas, simulationFailed: false };
   } catch (error) {
     const msUntilOpen = targetAt.getTime() - Date.now();
-    if (msUntilOpen <= 500) throw error;
-
     const fallbackGasLimit = bigintEnv("MINT_FALLBACK_GAS_LIMIT", 350_000n);
     await warn(
-      "Pre-open simulation is not accepted yet; using fallback gas limit for instant broadcast.",
+      msUntilOpen <= 500
+        ? "Simulation is not accepted yet at scheduled open time; using fallback gas and waiting for grace retry."
+        : "Pre-open simulation is not accepted yet; using fallback gas limit for open-time retry.",
       {
         rawError: rawErrorMessage(error),
         fallbackGasLimit: fallbackGasLimit.toString(),
+        msUntilOpen,
       },
     );
     return { gasLimit: fallbackGasLimit, simulationFailed: true };
