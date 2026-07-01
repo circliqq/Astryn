@@ -331,7 +331,7 @@ export function createSeaDropSignedMintPayload(options: SeaDropSignedMintOptions
   };
 }
 
-export function createMintPublicClient(options: BlockchainClientOptions) {
+export function createMintPublicClient(options: BlockchainClientOptions): ReturnType<typeof createPublicClient> {
   return createPublicClient({
     chain: chainByName(options.chainName),
     transport: http(options.rpcUrl, { retryCount: 2, retryDelay: 500 })
