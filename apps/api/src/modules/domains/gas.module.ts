@@ -123,10 +123,4 @@ class GasController {
   }
 }
 
-/** Round n up to the nearest 1 000. */
-function roundToNearest1k(n: number): number {
-  return Math.ceil(n / 1_000) * 1_000;
-}
-
-@Module({ controllers: [GasController] })
-export class GasModule {}
+/** Round n up to the nearest 1 
