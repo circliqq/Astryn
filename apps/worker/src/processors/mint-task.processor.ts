@@ -1955,15 +1955,11 @@ async function waitWithRollingSimulation(
           } catch (error) {
             const rawErr = rawErrorMessage(error);
             const forceBroadcast = process.env.MINT_FORCE_BROADCAST_ON_SIM_FAILURE === "true";
-            // If simulation never passed pre-open (wallet was on fallback gas), the
-            // failure at T=0 is almost certainly RPC lag — the tx is valid, the node
-            // just hasn't seen the new block yet.  Broadcast immediately instead of
-            // entering the grace period, which would be too late for a competitive mint.
-            const wasOnFallbackGas = p.simulationFailed;
-            if (forceBroadcast || wasOnFallbackGas) {
-              const reason = forceBroadcast
-                ? "MINT_FORCE_BROADCAST_ON_SIM_FAILURE is enabled"
-                : "wallet was on fallback gas pre-open (RPC timing issue)";
+            // Never auto-broadcast a failed simulation. A wrong phase timestamp
+            // can otherwise burn gas on a guaranteed revert; grace retry catches
+            // the real open without spending gas early.
+            if (forceBroadcast) {
+              const reason = "MINT_FORCE_BROADCAST_ON_SIM_FAILURE is enabled";
               console.warn(
                 `[GasWar] ⚠ Simulation failed for ${p.walletAddress} — force-broadcasting anyway (${reason}).\n` +
                 `  Raw error: ${rawErr}`,
@@ -1986,7 +1982,7 @@ async function waitWithRollingSimulation(
                 prisma,
                 mintTaskId,
                 "error",
-                `Simulation still failing for wallet ${shortAddress(p.walletAddress)} at phase open. Skipping broadcast to avoid gas loss.`,
+                `Simulation still failing for wallet ${shortAddress(p.walletAddress)} at phase open. Holding for grace retry to avoid gas loss.`,
                 { walletId: p.walletId, rawError: rawErr },
               );
               await prisma.mintTaskWallet
@@ -2005,9 +2001,9 @@ async function waitWithRollingSimulation(
   // ── Post-open grace retry ─────────────────────────────────────────────
   // OpenSea API phase times sometimes differ from the real on-chain startTime
   // by minutes. If wallets are still failing after T=0, keep retrying for
-  // MINT_POST_OPEN_GRACE_MS (default 30 min) so the bot catches the real open.
+  // MINT_POST_OPEN_GRACE_MS (default 90 min) so the bot catches the real open.
   // Set MINT_POST_OPEN_GRACE_MS=0 to disable.
-  const graceMs = numberEnv("MINT_POST_OPEN_GRACE_MS", 30 * 60 * 1_000);
+  const graceMs = numberEnv("MINT_POST_OPEN_GRACE_MS", 90 * 60 * 1_000);
   // Grace re-sim interval — much tighter than the pre-open poll so we catch
   // the real on-chain open as fast as possible. Default 200ms.
   const gracePollMs = numberEnv("MINT_GRACE_POLL_INTERVAL_MS", 200);
