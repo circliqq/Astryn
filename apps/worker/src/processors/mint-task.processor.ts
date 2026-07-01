@@ -194,7 +194,7 @@ export async function executeMintTask(
   // by seconds to minutes. Always prefer the on-chain time — it is the exact
   // value the contract checks against, so targeting it eliminates timing drift.
   // Falls back to the OpenSea API time only if the on-chain call fails.
-  if (task.collection.contractAddress && task.phaseType === "PUBLIC") {
+  if (task.collection.contractAddress && (task.phaseType === "PUBLIC" || task.phaseType === "FCFS")) {
     try {
       const network = task.collection.chain === "BASE" ? "base" : "ethereum";
       const rpcUrl = rpcUrlsFor(network)[0];
@@ -208,17 +208,15 @@ export async function executeMintTask(
           // Use the EARLIER of the two times — OpenSea API time or on-chain time.
           // Arriving early is safe (grace period handles pre-open failures),
           // but arriving late means missing the first blocks after phase open.
-          const earlier = onChainStartTime.getTime() < targetAt.getTime()
-            ? onChainStartTime
-            : targetAt;
+          const authoritativeStartTime = onChainStartTime;
           const delta = onChainStartTime.getTime() - targetAt.getTime();
           if (Math.abs(delta) > 500) {
             await log(prisma, task.id, "info",
               `On-chain SeaDrop startTime differs from OpenSea API by ${Math.round(delta / 1000)}s. ` +
-              `Using earlier time: ${earlier.toISOString()} (on-chain: ${onChainStartTime.toISOString()}, API: ${targetAt.toISOString()}).`
+              `Using on-chain time: ${authoritativeStartTime.toISOString()} (API: ${targetAt.toISOString()}).`
             );
           }
-          targetAt = earlier;
+          targetAt = authoritativeStartTime;
         } else {
           await log(prisma, task.id, "info",
             `On-chain SeaDrop startTime not available — using OpenSea API time: ${targetAt.toISOString()}.`
