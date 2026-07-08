@@ -262,6 +262,7 @@ export default function SniperPage() {
                   <Select value={form.network} onChange={(event) => setField("network", event.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD")}>
                     <option value="BASE">Base</option>
                     <option value="ETHEREUM">Ethereum</option>
+                    <option value="ROBINHOOD">Robinhood</option>
                   </Select>
                 </label>
                 <label>

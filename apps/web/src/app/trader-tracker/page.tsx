@@ -378,6 +378,7 @@ function AddWalletForm({ onAdded }: { onAdded: () => void }) {
               <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD")}>
                 <option value="ETHEREUM">Ethereum</option>
                 <option value="BASE">Base</option>
+                <option value="ROBINHOOD">Robinhood</option>
               </Select>
             </label>
             <div className="flex items-end">

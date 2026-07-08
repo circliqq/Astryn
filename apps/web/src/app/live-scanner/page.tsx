@@ -245,6 +245,7 @@ export default function LiveScannerPage() {
               <option value="">All chains</option>
               <option value="ETHEREUM">ETH</option>
               <option value="BASE">Base</option>
+              <option value="ROBINHOOD">Robinhood</option>
             </select>
             <select
               value={status}

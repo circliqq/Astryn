@@ -198,6 +198,7 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
               <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD")}>
                 <option value="ETHEREUM">Ethereum</option>
                 <option value="BASE">Base</option>
+                <option value="ROBINHOOD">Robinhood</option>
               </Select>
             </label>
             <label>
@@ -407,6 +408,7 @@ function CreateAlertForm({ onCreated }: { onCreated: () => void }) {
               <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD")}>
                 <option value="ETHEREUM">Ethereum</option>
                 <option value="BASE">Base</option>
+                <option value="ROBINHOOD">Robinhood</option>
               </Select>
             </label>
             <label>

@@ -209,6 +209,7 @@ export default function RpcHealthPage() {
                 >
                   <option value="BASE">Base</option>
                   <option value="ETHEREUM">Ethereum</option>
+                  <option value="ROBINHOOD">Robinhood</option>
                 </select>
               </div>
 

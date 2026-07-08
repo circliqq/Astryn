@@ -387,6 +387,7 @@ export default function ConsolidationPage() {
                   <Select value={network} onChange={(e) => { setNetwork(e.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD"); setSelectedWalletIds([]); }}>
                     <option value="ETHEREUM">Ethereum</option>
                     <option value="BASE">Base</option>
+                    <option value="ROBINHOOD">Robinhood</option>
                   </Select>
                 </label>
                 <label>

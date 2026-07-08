@@ -334,6 +334,7 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
               >
                 <option value="ETHEREUM">Ethereum</option>
                 <option value="BASE">Base</option>
+                <option value="ROBINHOOD">Robinhood</option>
               </Select>
             </label>
             <label>
