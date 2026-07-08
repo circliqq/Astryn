@@ -19,7 +19,7 @@ interface Collection {
   id: string;
   name: string;
   slug: string;
-  chain: "BASE" | "ETHEREUM";
+  chain: "BASE" | "ETHEREUM" | "ROBINHOOD";
   contractAddress: string;
   supply: number | null;
   imageUrl: string | null;
