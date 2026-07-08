@@ -46,10 +46,10 @@ const CONTRACT_TYPES = [
 ];
 
 const SPEED_TIERS = [
-  { key: "safe",     label: "Safe",       baseMul: 1.15, priBase: { base: 0.001, ethereum: 0.05  }, badge: "green"  as const },
-  { key: "balanced", label: "Balanced",   baseMul: 1.5,  priBase: { base: 0.002, ethereum: 0.1   }, badge: "blue"   as const },
-  { key: "fast",     label: "Fast",       baseMul: 2.0,  priBase: { base: 0.005, ethereum: 0.5   }, badge: "yellow" as const },
-  { key: "ultra",    label: "Ultra-Fast", baseMul: 3.0,  priBase: { base: 0.02,  ethereum: 2.0   }, badge: "red"    as const },
+  { key: "safe",     label: "Safe",       baseMul: 1.15, priBase: { base: 0.001, ethereum: 0.05, robinhood: 0.0005 }, badge: "green"  as const },
+  { key: "balanced", label: "Balanced",   baseMul: 1.5,  priBase: { base: 0.002, ethereum: 0.1,  robinhood: 0.001  }, badge: "blue"   as const },
+  { key: "fast",     label: "Fast",       baseMul: 2.0,  priBase: { base: 0.005, ethereum: 0.5,  robinhood: 0.002  }, badge: "yellow" as const },
+  { key: "ultra",    label: "Ultra-Fast", baseMul: 3.0,  priBase: { base: 0.02,  ethereum: 2.0,  robinhood: 0.01   }, badge: "red"    as const },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────
