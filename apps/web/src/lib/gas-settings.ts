@@ -129,6 +129,11 @@ const MIN_PRIORITY_BY_NETWORK: Record<NetworkKey, Record<GasMode, number>> = {
     safe:       0.01,
     balanced:   0.05,
     aggressive: 0.1
+  },
+  robinhood: {
+    safe:       0.0001,
+    balanced:   0.0005,
+    aggressive: 0.001
   }
 };
 
@@ -245,8 +250,9 @@ export function buildGasRecommendation(input: {
  * "safe" on Base (where base fees are <0.01 gwei) and at today's low ETH gas.
  */
 const RECOMMEND_THRESHOLDS: Record<NetworkKey, { balanced: number; aggressive: number }> = {
-  base:     { balanced: 0.01,  aggressive: 0.05  },
-  ethereum: { balanced: 5,     aggressive: 20    },
+  base:      { balanced: 0.01,  aggressive: 0.05  },
+  ethereum:  { balanced: 5,     aggressive: 20    },
+  robinhood: { balanced: 0.01,  aggressive: 0.05  },
 };
 
 export function recommendGasMode(input: {

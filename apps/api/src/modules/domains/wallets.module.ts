@@ -48,7 +48,8 @@ class UpdateWalletDto {
 
 const networkMap = {
   base: "BASE",
-  ethereum: "ETHEREUM"
+  ethereum: "ETHEREUM",
+  robinhood: "ROBINHOOD"
 } as const;
 
 function normalizePrivateKey(privateKey: string): `0x${string}` {
