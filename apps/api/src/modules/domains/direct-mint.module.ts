@@ -27,16 +27,16 @@ class FetchAbiDto {
   @IsString()
   contractAddress!: string;
 
-  @IsIn(["ethereum", "base"])
-  chain!: "ethereum" | "base";
+  @IsIn(["ethereum", "base", "robinhood"])
+  chain!: "ethereum" | "base" | "robinhood";
 }
 
 class CreateDirectMintTaskDto {
   @IsString()
   contractAddress!: string;
 
-  @IsIn(["ETHEREUM", "BASE"])
-  chain!: "ETHEREUM" | "BASE";
+  @IsIn(["ETHEREUM", "BASE", "ROBINHOOD"])
+  chain!: "ETHEREUM" | "BASE" | "ROBINHOOD";
 
   @IsString()
   functionName!: string;

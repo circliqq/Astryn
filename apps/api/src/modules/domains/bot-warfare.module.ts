@@ -8,7 +8,7 @@ import {
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { http, createPublicClient } from "viem";
-import { base, mainnet } from "viem/chains";
+import { chainByName } from "@mint-copilot/blockchain";
 import { RpcPool, type RpcEndpointConfig } from "@mint-copilot/rpc-pool";
 import { AuthGuard } from "../auth/auth.guard.js";
 import { CurrentUser, type CurrentUser as CurrentUserType } from "../auth/current-user.decorator.js";
@@ -27,10 +27,9 @@ export class BotWarfareService {
 
   async detectCompetition(
     mintTaskId: string | null,
-    network: "BASE" | "ETHEREUM",
+    network: "BASE" | "ETHEREUM" | "ROBINHOOD",
     collectionSlug?: string,
   ): Promise<{ competitorCount: number; recommendedGasWei: string; gasAdjusted: boolean }> {
-    const isBase = network === "BASE";
     const chainName = chainNameForNetwork(network);
     const rpcUrls = rpcUrlsForNetwork(network, this.config);
 
@@ -54,7 +53,7 @@ export class BotWarfareService {
         const best = pool.selectPrimary(chainName);
 
         const client = createPublicClient({
-          chain: isBase ? base : mainnet,
+          chain: chainByName(chainName),
           transport: http(best.url),
         });
 

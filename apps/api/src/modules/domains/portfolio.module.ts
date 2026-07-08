@@ -23,8 +23,8 @@ const ERC721_ABI = parseAbi([
 
 class SyncPortfolioDto {
   @IsOptional()
-  @IsIn(["BASE", "ETHEREUM"])
-  network?: "BASE" | "ETHEREUM";
+  @IsIn(["BASE", "ETHEREUM", "ROBINHOOD"])
+  network?: "BASE" | "ETHEREUM" | "ROBINHOOD";
 
   @IsOptional()
   @IsString()
@@ -47,7 +47,7 @@ class PortfolioController {
     const items = await this.prisma.portfolioItem.findMany({
       where: {
         userId: user.id,
-        ...(network ? { network: network as "BASE" | "ETHEREUM" } : {}),
+        ...(network ? { network: network as "BASE" | "ETHEREUM" | "ROBINHOOD" } : {}),
       },
       orderBy: { acquiredAt: "desc" },
     });

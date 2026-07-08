@@ -24,12 +24,15 @@ class SimulationController {
   @Post("run")
   async run(@Body() body: SimulationDto) {
     const wallet = await this.prisma.wallet.findUniqueOrThrow({ where: { id: body.walletId } });
-    const isBase = wallet.network === "BASE";
-    const rpcUrl = this.config.getOrThrow<string>(isBase ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY");
+    const chainName =
+      wallet.network === "BASE" ? "base" : wallet.network === "ROBINHOOD" ? "robinhood" : "ethereum";
+    const rpcKey =
+      chainName === "base" ? "BASE_RPC_PRIMARY" : chainName === "robinhood" ? "ROBINHOOD_RPC_PRIMARY" : "ETH_RPC_PRIMARY";
+    const rpcUrl = this.config.getOrThrow<string>(rpcKey);
 
     try {
       const result = await simulateTx(
-        { chainName: isBase ? "base" : "ethereum", rpcUrl },
+        { chainName, rpcUrl },
         {
           account: wallet.address as `0x${string}`,
           to: body.to,

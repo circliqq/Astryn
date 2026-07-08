@@ -18,9 +18,10 @@ import { PrismaService } from "../prisma/prisma.service.js";
 import { broadcastWithRpcPool, chainNameForNetwork, primaryRpcForNetwork } from "./rpc-failover.js";
 
 // Chain IDs for 1inch API
-const CHAIN_IDS: Record<"BASE" | "ETHEREUM", number> = {
+const CHAIN_IDS: Record<"BASE" | "ETHEREUM" | "ROBINHOOD", number> = {
   BASE: 8453,
   ETHEREUM: 1,
+  ROBINHOOD: 4663,
 };
 
 // Native ETH address used by 1inch

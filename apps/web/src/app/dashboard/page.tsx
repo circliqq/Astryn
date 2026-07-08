@@ -126,7 +126,7 @@ function ReadinessModal({ wallets, onClose }: { wallets: Wallet[]; onClose: () =
 // ── Dashboard ─────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const router  = useRouter();
-  const [network,   setNetwork]   = useState<"base" | "ethereum">("base");
+  const [network,   setNetwork]   = useState<"base" | "ethereum" | "robinhood">("base");
   const [showModal, setShowModal] = useState(false);
 
   const { data: wallets = [] } = useQuery<Wallet[]>({
@@ -213,7 +213,7 @@ export default function DashboardPage() {
           {/* Gas chart */}
           <Panel className="p-5 xl:col-span-4">
             <p className="label mb-4">
-              Gas — {network === "base" ? "Base" : "Ethereum"}
+              Gas — {network === "base" ? "Base" : network === "robinhood" ? "Robinhood" : "Ethereum"}
             </p>
             <GasChart
               currentGwei={baseFee}

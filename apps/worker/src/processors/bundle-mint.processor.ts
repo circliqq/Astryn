@@ -86,7 +86,7 @@ export async function processBundleMintJob(
     },
   });
 
-  const chainName = (task.chain === "BASE" ? "base" : "ethereum") as "base" | "ethereum";
+  const chainName = (task.chain === "BASE" ? "base" : task.chain === "ROBINHOOD" ? "robinhood" : "ethereum") as "base" | "ethereum" | "robinhood";
   const rpcUrls = rpcUrlsFor(chainName);
   const primaryRpc = await fastestRpcUrl(chainName, rpcUrls);
 
@@ -383,7 +383,7 @@ interface Eip7702Args {
   prisma: PrismaClient;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   task: any;
-  chainName: "base" | "ethereum";
+  chainName: "base" | "ethereum" | "robinhood";
   rpcUrl: string;
   contractAddress: `0x${string}`;
   quantity: number;
@@ -421,7 +421,11 @@ async function runEip7702Bundle(a: Eip7702Args) {
 
   const executor = (task.executorAddress ??
     process.env[
-      chainName === "base" ? "BUNDLE_MINT_7702_EXECUTOR_BASE" : "BUNDLE_MINT_7702_EXECUTOR_ETH"
+      chainName === "base"
+        ? "BUNDLE_MINT_7702_EXECUTOR_BASE"
+        : chainName === "robinhood"
+          ? "BUNDLE_MINT_7702_EXECUTOR_ROBINHOOD"
+          : "BUNDLE_MINT_7702_EXECUTOR_ETH"
     ]) as `0x${string}` | undefined;
   if (!executor) {
     await markFailed(
@@ -745,8 +749,8 @@ function coerceArgs(fn: AbiFunction, args: unknown[]): unknown[] {
   });
 }
 
-function rpcUrlsFor(network: "base" | "ethereum"): string[] {
-  const prefix = network === "base" ? "BASE" : "ETH";
+function rpcUrlsFor(network: "base" | "ethereum" | "robinhood"): string[] {
+  const prefix = network === "base" ? "BASE" : network === "robinhood" ? "ROBINHOOD" : "ETH";
   return [
     process.env[`${prefix}_RPC_PRIMARY`],
     process.env[`${prefix}_RPC_BACKUP_1`],
@@ -768,7 +772,7 @@ function shorten(addr: string) {
   return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
 }
 
-async function fastestRpcUrl(chainName: "base" | "ethereum", urls: string[]) {
+async function fastestRpcUrl(chainName: "base" | "ethereum" | "robinhood", urls: string[]) {
   if (urls.length <= 1) return urls[0];
   const checks = await Promise.all(
     urls.map(async (url) => {

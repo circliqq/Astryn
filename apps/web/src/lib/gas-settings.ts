@@ -1,5 +1,5 @@
 export type GasMode = "safe" | "balanced" | "aggressive";
-export type NetworkKey = "base" | "ethereum";
+export type NetworkKey = "base" | "ethereum" | "robinhood";
 
 export interface GasSettings {
   mode: GasMode;

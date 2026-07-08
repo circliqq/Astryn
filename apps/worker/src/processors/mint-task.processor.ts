@@ -196,7 +196,7 @@ export async function executeMintTask(
   // Falls back to the OpenSea API time only if the on-chain call fails.
   if (task.collection.contractAddress && (task.phaseType === "PUBLIC" || task.phaseType === "FCFS")) {
     try {
-      const network = task.collection.chain === "BASE" ? "base" : "ethereum";
+      const network = task.collection.chain === "BASE" ? "base" : task.collection.chain === "ROBINHOOD" ? "robinhood" : "ethereum";
       const rpcUrl = rpcUrlsFor(network)[0];
       if (rpcUrl) {
         const onChainStartTime = await fetchSeaDropPublicStartTime(
@@ -252,7 +252,7 @@ export async function executeMintTask(
 
   try {
     const openSea = new OpenSeaClient({ apiKey: env("OPENSEA_API_KEY") });
-    const network = task.collection.chain === "BASE" ? "base" : "ethereum";
+    const network = task.collection.chain === "BASE" ? "base" : task.collection.chain === "ROBINHOOD" ? "robinhood" : "ethereum";
     const rpcUrls = rpcUrlsFor(network);
 
     // General-purpose pool — used for health checks, simulations, gas estimation,
@@ -276,7 +276,7 @@ export async function executeMintTask(
     // Broadcast-only pool — dRPC (or any ETH_BROADCAST_RPC / BASE_BROADCAST_RPC)
     // used exclusively for eth_sendRawTransaction at T=0.
     // Falls back to the general pool if no broadcast-specific RPC is configured.
-    const broadcastRpcKey = network === "base" ? "BASE_BROADCAST_RPC" : "ETH_BROADCAST_RPC";
+    const broadcastRpcKey = network === "base" ? "BASE_BROADCAST_RPC" : network === "robinhood" ? "ROBINHOOD_BROADCAST_RPC" : "ETH_BROADCAST_RPC";
     const broadcastRpcUrls = [
       process.env[broadcastRpcKey],
       ...rpcUrls,                   // fallback: general RPCs
@@ -1693,7 +1693,7 @@ function resolveMintPriceWei(
 }
 
 async function resolveGasLimit(
-  options: { chainName: "base" | "ethereum"; rpcUrl: string },
+  options: { chainName: "base" | "ethereum" | "robinhood"; rpcUrl: string },
   request: {
     account: `0x${string}`;
     to: `0x${string}`;
@@ -1743,7 +1743,7 @@ async function waitWithRollingSimulation(
   mintTaskId: string,
   prepared: PreparedMint[],
   targetAt: Date,
-  options: { chainName: "base" | "ethereum"; rpcUrl: string },
+  options: { chainName: "base" | "ethereum" | "robinhood"; rpcUrl: string },
   primaryLatencyMs: number | null = null,
   payloadRefresher?: (walletAddress: string) => Promise<MintPayload>,
 ): Promise<PreparedMint[]> {
@@ -2095,7 +2095,7 @@ async function refreshSignatures(
   prisma: PrismaClient,
   mintTaskId: string,
   items: PreparedMint[],
-  options: { chainName: "base" | "ethereum"; rpcUrl: string },
+  options: { chainName: "base" | "ethereum" | "robinhood"; rpcUrl: string },
 ): Promise<PreparedMint[]> {
   const client = createMintPublicClient(options);
   return Promise.all(
@@ -2623,7 +2623,7 @@ async function sendToBaseEndpoints(signedTx: Hex): Promise<void> {
 //   BASE_WS_RPC=wss://base-mainnet.g.alchemy.com/v2/<KEY>
 
 async function waitForNextBlock(
-  network: "ethereum" | "base",
+  network: "ethereum" | "base" | "robinhood",
   deadlineMs: number,
 ): Promise<void> {
   const remainingMs = deadlineMs - Date.now();
@@ -2682,7 +2682,7 @@ async function waitForNextBlock(
 // waitForAnyReceipt races all known hashes and returns the first confirmed receipt.
 
 async function waitForAnyReceipt(
-  options: { chainName: "base" | "ethereum"; rpcUrl: string },
+  options: { chainName: "base" | "ethereum" | "robinhood"; rpcUrl: string },
   hashes: Hex[],
   { confirmations, timeoutMs }: { confirmations: number; timeoutMs: number },
 ) {
@@ -2777,7 +2777,7 @@ function isReceiptPending(error: unknown) {
   return /timeout|timed out|not found|could not find/i.test(rawErrorMessage(error));
 }
 
-async function broadcastMintTransaction(pool: RpcPool, network: "base" | "ethereum", signedTx: Hex) {
+async function broadcastMintTransaction(pool: RpcPool, network: "base" | "ethereum" | "robinhood", signedTx: Hex) {
   const mode = (process.env["MINT_BROADCAST_RPC_MODE"] ?? "fastest").toLowerCase();
   return mode === "parallel"
     ? pool.broadcastUntilAccepted(network, signedTx)
@@ -2794,8 +2794,8 @@ function toOpenSeaPhase(phaseType: string) {
   return "public";
 }
 
-function rpcUrlsFor(network: "base" | "ethereum"): string[] {
-  const prefix = network === "base" ? "BASE" : "ETH";
+function rpcUrlsFor(network: "base" | "ethereum" | "robinhood"): string[] {
+  const prefix = network === "base" ? "BASE" : network === "robinhood" ? "ROBINHOOD" : "ETH";
   return [
     env(`${prefix}_RPC_PRIMARY`),
     process.env[`${prefix}_RPC_BACKUP_1`],
@@ -2836,7 +2836,7 @@ async function detectBotCompetition(
   prisma: PrismaClient,
   mintTaskId: string,
   collectionSlug: string,
-  chain: "BASE" | "ETHEREUM",
+  chain: "BASE" | "ETHEREUM" | "ROBINHOOD",
   currentGas: { baseFeePerGas: bigint; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint },
 ): Promise<CompetitionResult> {
   // Tuned thresholds: detect earlier (1.3×) and boost harder (1.5×).
@@ -3034,7 +3034,7 @@ async function queueInstantFlipperIntents(
   taskId: string,
   collectionSlug: string,
   contractAddress: string,
-  network: "ethereum" | "base",
+  network: "ethereum" | "base" | "robinhood",
   rpcUrl: string,
   rawSettings: unknown,
   broadcasted: BroadcastedMint[],
@@ -3139,7 +3139,7 @@ export async function executeInstantFlipJob(
   });
 
   const openSea = new OpenSeaClient({ apiKey: env("OPENSEA_API_KEY") });
-  const network = task.collection.chain === "BASE" ? "base" : "ethereum";
+  const network = task.collection.chain === "BASE" ? "base" : task.collection.chain === "ROBINHOOD" ? "robinhood" : "ethereum";
   const rpcUrls = rpcUrlsFor(network);
   const rpcUrl = rpcUrls[0] ?? "";
   const client = createMintPublicClient({ chainName: network, rpcUrl });
@@ -3258,7 +3258,7 @@ function extractTransferTokenIds(
 async function createSeaportListing(
   openSea: OpenSeaClient,
   client: ReturnType<typeof createMintPublicClient>,
-  network: "ethereum" | "base",
+  network: "ethereum" | "base" | "robinhood",
   contractAddress: string,
   tokenId: bigint,
   priceEth: number,

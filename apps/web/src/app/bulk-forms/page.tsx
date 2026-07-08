@@ -11,7 +11,7 @@ interface Wallet {
   id: string;
   name: string;
   address: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   status: string;
 }
 

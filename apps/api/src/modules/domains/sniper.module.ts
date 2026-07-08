@@ -34,8 +34,8 @@ class CreateSniperTaskDto {
   @IsString()
   contractAddress?: string;
 
-  @IsIn(["BASE", "ETHEREUM"])
-  network!: "BASE" | "ETHEREUM";
+  @IsIn(["BASE", "ETHEREUM", "ROBINHOOD"])
+  network!: "BASE" | "ETHEREUM" | "ROBINHOOD";
 
   @IsString()
   maxPriceWei!: string;

@@ -9,7 +9,7 @@ export async function processRpcHealth(_job: Job, prisma: PrismaClient) {
       id: endpoint.id,
       name: endpoint.name,
       url: endpoint.url,
-      chainName: endpoint.network === "BASE" ? "base" : "ethereum",
+      chainName: endpoint.network === "BASE" ? "base" : endpoint.network === "ROBINHOOD" ? "robinhood" : "ethereum",
       priority: endpoint.priority
     }))
   );

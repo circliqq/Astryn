@@ -48,7 +48,7 @@ interface MintTask {
   instantFlipperJson: InstantFlipperJson | null;
   scheduledAt: string | null;
   createdAt: string;
-  collection: { id: string; name: string; chain: "BASE" | "ETHEREUM"; slug: string };
+  collection: { id: string; name: string; chain: "BASE" | "ETHEREUM" | "ROBINHOOD"; slug: string };
   wallets: Array<{ walletId: string }>;
 }
 

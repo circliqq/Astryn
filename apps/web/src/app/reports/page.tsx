@@ -311,7 +311,7 @@ export default function ReportsPage() {
               <div>
                 <StatusPill status={task.status} />
                 <h2 className="mt-2 text-[15px] font-semibold" style={{ color: "var(--text-1)" }}>
-                  {task.collection?.name ?? "Unknown"} — {task.collection?.chain === "BASE" ? "Base" : "Ethereum"}
+                  {task.collection?.name ?? "Unknown"} — {task.collection?.chain === "BASE" ? "Base" : task.collection?.chain === "ROBINHOOD" ? "Robinhood" : "Ethereum"}
                 </h2>
                 <p className="mt-0.5 font-mono text-[11px]" style={{ color: "var(--text-3)" }}>Task {task.id.slice(0, 8)}</p>
               </div>

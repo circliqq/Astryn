@@ -36,8 +36,8 @@ class CreateBundleMintTaskDto {
   @IsString()
   contractAddress!: string;
 
-  @IsIn(["ETHEREUM", "BASE"])
-  chain!: "ETHEREUM" | "BASE";
+  @IsIn(["ETHEREUM", "BASE", "ROBINHOOD"])
+  chain!: "ETHEREUM" | "BASE" | "ROBINHOOD";
 
   @IsIn(["SEADROP", "CUSTOM"])
   kind!: "SEADROP" | "CUSTOM";

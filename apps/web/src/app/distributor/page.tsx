@@ -11,7 +11,7 @@ interface Wallet {
   id: string;
   name: string;
   address: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   lastBalanceWei: string | null;
 }
 
@@ -170,7 +170,7 @@ export default function DistributorPage() {
         <div className="space-y-5">
           <div className="grid gap-4 md:grid-cols-3">
             <div className="metric-card"><p className="label-caps">Sender balance</p><p className="metric-value">{formatEth(sender?.lastBalanceWei ?? null)}</p></div>
-            <div className="metric-card"><p className="label-caps">Network</p><p className="metric-value text-[20px]">{sender?.network === "ETHEREUM" ? "Ethereum" : "Base"}</p></div>
+            <div className="metric-card"><p className="label-caps">Network</p><p className="metric-value text-[20px]">{sender?.network === "ETHEREUM" ? "Ethereum" : sender?.network === "ROBINHOOD" ? "Robinhood" : "Base"}</p></div>
             <div className="metric-card"><p className="label-caps">Available wallets</p><p className="metric-value">{compatibleRecipients.length}</p></div>
           </div>
 

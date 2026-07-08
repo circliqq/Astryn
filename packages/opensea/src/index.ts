@@ -141,7 +141,7 @@ export class OpenSeaClient {
     return { ...info, phases };
   }
 
-  async scanDropByContract(contractAddress: string, chain: "ethereum" | "base"): Promise<CollectionInfo> {
+  async scanDropByContract(contractAddress: string, chain: "ethereum" | "base" | "robinhood"): Promise<CollectionInfo> {
     // Resolve slug from contract address via OpenSea API
     let slug: string | undefined;
     try {
@@ -223,7 +223,7 @@ export class OpenSeaClient {
   /** Resolve an OpenSea collection slug from a contract address (or null). */
   async slugByContract(
     contractAddress: string,
-    chain: "ethereum" | "base",
+    chain: "ethereum" | "base" | "robinhood",
   ): Promise<string | null> {
     try {
       const data = await this.request<Record<string, unknown>>(
@@ -778,7 +778,7 @@ export class OpenSeaClient {
   }
 
   async postSeaportListing(
-    chain: "ethereum" | "base",
+    chain: "ethereum" | "base" | "robinhood",
     parameters: SeaportOrderParameters,
     signature: string,
   ): Promise<void> {
@@ -1096,7 +1096,10 @@ fragment currencyIdentifier on ContractIdentifier {
   }
 
   private normalizeChain(chain: string): SupportedNetwork {
-    return chain.toLowerCase().includes("ethereum") ? "ethereum" : "base";
+    const lower = chain.toLowerCase();
+    if (lower.includes("ethereum")) return "ethereum";
+    if (lower.includes("robinhood")) return "robinhood";
+    return "base";
   }
 
   // Extract a flat list of 0x addresses from various allowlist response shapes.

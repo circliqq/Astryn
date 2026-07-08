@@ -12,8 +12,8 @@ class FundingDto {
   @IsString()
   requiredWeiPerWallet!: string;
 
-  @IsIn(["BASE", "ETHEREUM"])
-  network!: "BASE" | "ETHEREUM";
+  @IsIn(["BASE", "ETHEREUM", "ROBINHOOD"])
+  network!: "BASE" | "ETHEREUM" | "ROBINHOOD";
 }
 
 @Controller("funding")

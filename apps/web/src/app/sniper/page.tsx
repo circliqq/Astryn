@@ -11,7 +11,7 @@ interface Wallet {
   id: string;
   name: string;
   address: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   status: string;
 }
 
@@ -21,7 +21,7 @@ interface SniperTask {
   type: "FAT_FINGER" | "RARITY";
   collectionSlug: string | null;
   contractAddress: string | null;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   maxPriceWei: string;
   minPriceWei: string | null;
   quantity: number;
@@ -62,7 +62,7 @@ export default function SniperPage() {
     type: "FAT_FINGER" as "FAT_FINGER" | "RARITY",
     collectionSlug: "",
     contractAddress: "",
-    network: "BASE" as "BASE" | "ETHEREUM",
+    network: "BASE" as "BASE" | "ETHEREUM" | "ROBINHOOD",
     maxPriceEth: "0.05",
     minPriceEth: "",
     quantity: "1",
@@ -197,7 +197,7 @@ export default function SniperPage() {
                           <p className="mt-0.5 font-mono text-[11px]" style={{ color: "var(--text-3)" }}>{task.contractAddress ?? task.id.slice(0, 10)}</p>
                         </td>
                         <td>{task.wallet?.name ?? task.walletId.slice(0, 8)}</td>
-                        <td>{task.network === "BASE" ? "Base" : "Ethereum"}</td>
+                        <td>{task.network === "BASE" ? "Base" : task.network === "ROBINHOOD" ? "Robinhood" : "Ethereum"}</td>
                         <td>
                           {task.type === "FAT_FINGER"
                             ? `${Math.round((task.floorThreshold ?? 0.7) * 100)}% of floor`
@@ -259,7 +259,7 @@ export default function SniperPage() {
               <form className="grid gap-4 p-5 md:grid-cols-2" onSubmit={handleSubmit}>
                 <label>
                   <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Network</span>
-                  <Select value={form.network} onChange={(event) => setField("network", event.target.value as "BASE" | "ETHEREUM")}>
+                  <Select value={form.network} onChange={(event) => setField("network", event.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD")}>
                     <option value="BASE">Base</option>
                     <option value="ETHEREUM">Ethereum</option>
                   </Select>

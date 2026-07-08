@@ -58,8 +58,8 @@ export async function getCollectionWithPhaseData(
     if (hasPublicPhase && storedCollection.contractAddress) {
       try {
         const chain = (storedCollection as { chain?: string }).chain;
-        const chainName = chain === "BASE" ? "base" : "ethereum";
-        const rpcKey = chainName === "base" ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY";
+        const chainName = chain === "BASE" ? "base" : chain === "ROBINHOOD" ? "robinhood" : "ethereum";
+        const rpcKey = chainName === "base" ? "BASE_RPC_PRIMARY" : chainName === "robinhood" ? "ROBINHOOD_RPC_PRIMARY" : "ETH_RPC_PRIMARY";
         const rpcUrl = config.get<string>(rpcKey);
         if (rpcUrl) {
           onChainPublicStartTime = await fetchSeaDropPublicStartTime(

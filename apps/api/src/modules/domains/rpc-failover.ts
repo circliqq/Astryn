@@ -3,14 +3,14 @@ import { type ChainName } from "@mint-copilot/blockchain";
 import { RpcPool } from "@mint-copilot/rpc-pool";
 import { keccak256, type Hex } from "viem";
 
-export type NetworkName = "BASE" | "ETHEREUM";
+export type NetworkName = "BASE" | "ETHEREUM" | "ROBINHOOD";
 
 export function chainNameForNetwork(network: string): ChainName {
-  return network === "BASE" ? "base" : "ethereum";
+  return network === "BASE" ? "base" : network === "ROBINHOOD" ? "robinhood" : "ethereum";
 }
 
 export function rpcUrlsForNetwork(network: string, config: ConfigService): string[] {
-  const prefix = network === "BASE" ? "BASE" : "ETH";
+  const prefix = network === "BASE" ? "BASE" : network === "ROBINHOOD" ? "ROBINHOOD" : "ETH";
   return [
     config.getOrThrow<string>(`${prefix}_RPC_PRIMARY`),
     config.get<string>(`${prefix}_RPC_BACKUP_1`),

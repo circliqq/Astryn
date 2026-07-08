@@ -15,7 +15,7 @@ const GAS_ESTIMATE_BUFFER = 1.2;
 interface SimulateMintBody {
   contractAddress: string;
   walletAddress: string;
-  network: "base" | "ethereum";
+  network: "base" | "ethereum" | "robinhood";
   priceWei: string;
   quantity?: number;
 }
@@ -41,8 +41,8 @@ class GasController {
   constructor(private readonly config: ConfigService) {}
 
   @Get("current")
-  async current(@Query("network") network: "base" | "ethereum" = "base") {
-    const rpcUrl = this.config.getOrThrow<string>(network === "base" ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY");
+  async current(@Query("network") network: "base" | "ethereum" | "robinhood" = "base") {
+    const rpcUrl = this.config.getOrThrow<string>(network === "base" ? "BASE_RPC_PRIMARY" : network === "robinhood" ? "ROBINHOOD_RPC_PRIMARY" : "ETH_RPC_PRIMARY");
     const gas = await Promise.race([
       fetchCurrentGas({ chainName: network, rpcUrl }),
       new Promise<never>((_, reject) =>
@@ -74,7 +74,7 @@ class GasController {
     @Body() body: SimulateMintBody,
   ): Promise<SimulateMintResult | SimulateMintFallback> {
     const rpcUrl = this.config.getOrThrow<string>(
-      body.network === "base" ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY",
+      body.network === "base" ? "BASE_RPC_PRIMARY" : body.network === "robinhood" ? "ROBINHOOD_RPC_PRIMARY" : "ETH_RPC_PRIMARY",
     );
     const chainName = body.network as ChainName;
     const quantity = Math.max(1, body.quantity ?? 1);

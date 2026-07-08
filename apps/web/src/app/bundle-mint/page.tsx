@@ -49,7 +49,7 @@ interface Wallet {
   id: string;
   name: string;
   address: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   status: string;
 }
 interface BundleMintTask {
@@ -63,7 +63,7 @@ interface BundleMintTask {
 
 type Kind = "SEADROP" | "CUSTOM";
 type Mode = "MULTI_WALLET" | "SINGLE_WALLET_MULTI_TX" | "EIP7702";
-type Chain = "ethereum" | "base";
+type Chain = "ethereum" | "base" | "robinhood";
 type GasModeExtended = GasMode | "advanced";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -71,8 +71,8 @@ type GasModeExtended = GasMode | "advanced";
 function shortAddr(addr: string) {
   return `${addr.slice(0, 8)}…${addr.slice(-4)}`;
 }
-function chainToNetwork(chain: Chain): "ETHEREUM" | "BASE" {
-  return chain === "base" ? "BASE" : "ETHEREUM";
+function chainToNetwork(chain: Chain): "ETHEREUM" | "BASE" | "ROBINHOOD" {
+  return chain === "base" ? "BASE" : chain === "robinhood" ? "ROBINHOOD" : "ETHEREUM";
 }
 function statusColor(status: string) {
   if (status === "COMPLETED") return "green";
@@ -376,6 +376,7 @@ export default function BundleMintPage() {
                   >
                     <option value="ethereum">Ethereum</option>
                     <option value="base">Base</option>
+                    <option value="robinhood">Robinhood</option>
                   </select>
                 </div>
 
@@ -732,7 +733,7 @@ export default function BundleMintPage() {
               <div className="grid gap-2 p-5 md:grid-cols-2 xl:grid-cols-3">
                 {compatibleWallets.length === 0 ? (
                   <p className="notice md:col-span-2 xl:col-span-3">
-                    No {chain === "base" ? "Base" : "Ethereum"} wallets found.
+                    No {chain === "base" ? "Base" : chain === "robinhood" ? "Robinhood" : "Ethereum"} wallets found.
                   </p>
                 ) : (
                   compatibleWallets

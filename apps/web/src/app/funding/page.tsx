@@ -10,7 +10,7 @@ import { apiFetch } from "@/lib/api";
 interface Wallet {
   id: string;
   name: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   status: string;
   lastBalanceWei: string | null;
 }

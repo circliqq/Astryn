@@ -20,7 +20,7 @@ import {
 interface Wallet {
   id: string;
   name: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
 }
 
 const MODE_TONE: Record<GasMode, "green" | "blue" | "yellow"> = {
@@ -31,7 +31,7 @@ const MODE_TONE: Record<GasMode, "green" | "blue" | "yellow"> = {
 
 export default function GasSettingsPage() {
   const [settings, setSettings] = useState<GasSettings>(GAS_PRESETS.balanced);
-  const [network, setNetwork] = useState<"base" | "ethereum">("base");
+  const [network, setNetwork] = useState<"base" | "ethereum" | "robinhood">("base");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
@@ -162,9 +162,10 @@ export default function GasSettingsPage() {
               <div className="space-y-4 p-5">
                 <label>
                   <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Network</span>
-                  <Select value={network} onChange={(event) => setNetwork(event.target.value as "base" | "ethereum")}>
+                  <Select value={network} onChange={(event) => setNetwork(event.target.value as "base" | "ethereum" | "robinhood")}>
                     <option value="base">Base</option>
                     <option value="ethereum">Ethereum</option>
+                    <option value="robinhood">Robinhood</option>
                   </Select>
                 </label>
                 <div className="notice text-[12px]">

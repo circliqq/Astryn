@@ -29,8 +29,8 @@ class CreateSweepAlertDto {
   @IsString()
   collectionSlug!: string;
 
-  @IsIn(["BASE", "ETHEREUM"])
-  network!: "BASE" | "ETHEREUM";
+  @IsIn(["BASE", "ETHEREUM", "ROBINHOOD"])
+  network!: "BASE" | "ETHEREUM" | "ROBINHOOD";
 
   @IsOptional()
   @IsNumber()
@@ -49,8 +49,8 @@ class BatchAlertItemDto {
   @IsString()
   collectionSlug!: string;
 
-  @IsIn(["BASE", "ETHEREUM"])
-  network!: "BASE" | "ETHEREUM";
+  @IsIn(["BASE", "ETHEREUM", "ROBINHOOD"])
+  network!: "BASE" | "ETHEREUM" | "ROBINHOOD";
 
   @IsOptional()
   @IsNumber()
@@ -175,7 +175,7 @@ async function resolveWalletAddress(apiKey: string, input: string): Promise<stri
 async function fetchWalletCollections(
   apiKey: string,
   walletAddress: string,
-  chain: "ethereum" | "base",
+  chain: "ethereum" | "base" | "robinhood",
 ): Promise<OpenSeaCollectionEntry[]> {
   const nfts: OpenSeaNFTEntry[] = [];
   let next: string | null = null;
@@ -389,12 +389,12 @@ class SweepAlertController {
   async importProfile(
     @CurrentUser() _user: CurrentUserType,
     @Query("url") url: string,
-    @Query("network") network: "BASE" | "ETHEREUM" = "ETHEREUM",
+    @Query("network") network: "BASE" | "ETHEREUM" | "ROBINHOOD" = "ETHEREUM",
   ) {
     if (!url?.trim()) throw new BadRequestException("Provide an OpenSea profile URL, username, or wallet address.");
 
     const apiKey = this.config.getOrThrow<string>("OPENSEA_API_KEY");
-    const chain = network === "BASE" ? "base" : "ethereum";
+    const chain = network === "BASE" ? "base" : network === "ROBINHOOD" ? "robinhood" : "ethereum";
 
     let walletAddress: string;
     try {

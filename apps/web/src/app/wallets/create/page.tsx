@@ -16,7 +16,7 @@ interface WalletResponse {
 export default function WalletCreatePage() {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [network, setNetwork] = useState<"base" | "ethereum">("base");
+  const [network, setNetwork] = useState<"base" | "ethereum" | "robinhood">("base");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,10 +66,11 @@ export default function WalletCreatePage() {
           <select
             className="h-10 w-full rounded-md border border-graphite-700 bg-graphite-950 px-3 text-sm"
             value={network}
-            onChange={(e) => setNetwork(e.target.value as "base" | "ethereum")}
+            onChange={(e) => setNetwork(e.target.value as "base" | "ethereum" | "robinhood")}
           >
             <option value="base">Base</option>
             <option value="ethereum">Ethereum</option>
+            <option value="robinhood">Robinhood</option>
           </select>
           {error && <p className="text-sm text-status-red-text">{error}</p>}
           <Button className="w-full" disabled={loading || !name.trim()}>

@@ -11,7 +11,7 @@ interface Drop {
   slug: string;
   name: string;
   imageUrl: string | null;
-  chain: "BASE" | "ETHEREUM" | string;
+  chain: "BASE" | "ETHEREUM" | "ROBINHOOD" | string;
   contractAddress?: string | null;
   floorPriceEth?: number | null;
   traits?: Array<{ traitType: string; value: string; count?: number; rarityScore?: number }>;
@@ -78,7 +78,7 @@ export default function TraitsPage() {
                             <p className="truncate text-[14px] font-semibold" style={{ color: "var(--text-1)" }}>{drop.name}</p>
                             <p className="mt-0.5 truncate font-mono text-[11px]" style={{ color: "var(--text-3)" }}>{drop.slug}</p>
                           </div>
-                          <Badge tone={drop.chain === "BASE" ? "blue" : "slate"}>{drop.chain === "BASE" ? "Base" : "Ethereum"}</Badge>
+                          <Badge tone={drop.chain === "BASE" ? "blue" : "slate"}>{drop.chain === "BASE" ? "Base" : drop.chain === "ROBINHOOD" ? "Robinhood" : "Ethereum"}</Badge>
                         </div>
                         <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
                           <div><p className="label-caps">Floor</p><p className="mt-1" style={{ color: "var(--text-2)" }}>{drop.floorPriceEth != null ? `${drop.floorPriceEth} ETH` : "-"}</p></div>

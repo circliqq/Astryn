@@ -46,8 +46,8 @@ class CreateRuleDto {
   @IsString()
   coldWallet!: string;
 
-  @IsIn(["BASE", "ETHEREUM"])
-  network!: "BASE" | "ETHEREUM";
+  @IsIn(["BASE", "ETHEREUM", "ROBINHOOD"])
+  network!: "BASE" | "ETHEREUM" | "ROBINHOOD";
 
   @IsArray()
   @IsString({ each: true })
@@ -148,10 +148,10 @@ class ConsolidationController {
   @Get("wallet-nfts")
   async walletNfts(
     @Query("address") address: string,
-    @Query("network") network: "BASE" | "ETHEREUM" = "ETHEREUM",
+    @Query("network") network: "BASE" | "ETHEREUM" | "ROBINHOOD" = "ETHEREUM",
   ) {
     const apiKey = this.config.getOrThrow<string>("OPENSEA_API_KEY");
-    const chain = network === "BASE" ? "base" : "ethereum";
+    const chain = network === "BASE" ? "base" : network === "ROBINHOOD" ? "robinhood" : "ethereum";
     const nfts: Array<{ collection?: string; name?: string; image_url?: string }> = [];
     let next: string | null = null;
 

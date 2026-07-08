@@ -19,8 +19,8 @@ class CreateCollectionWatchDto {
   @IsString()
   collectionSlug!: string;
 
-  @IsIn(["BASE", "ETHEREUM"])
-  network!: "BASE" | "ETHEREUM";
+  @IsIn(["BASE", "ETHEREUM", "ROBINHOOD"])
+  network!: "BASE" | "ETHEREUM" | "ROBINHOOD";
 
   @IsBoolean()
   @IsOptional()

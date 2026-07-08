@@ -13,7 +13,7 @@ interface RpcResult {
   status: "healthy" | "degraded" | "offline";
   latencyMs: number | null;
   blockNumber: string | null;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   priority: number;
   checkedAt: string;
 }
@@ -22,7 +22,7 @@ interface RpcEndpoint {
   id: string;
   name: string;
   url: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   priority: number;
   enabled: boolean;
 }
@@ -37,7 +37,7 @@ function statusColor(status: string) {
 interface RpcEndpointPayload {
   name: string;
   url: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   priority: number;
 }
 
@@ -53,7 +53,7 @@ export default function RpcHealthPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
-  const [network, setNetwork] = useState<"BASE" | "ETHEREUM">("BASE");
+  const [network, setNetwork] = useState<"BASE" | "ETHEREUM" | "ROBINHOOD">("BASE");
   const [priority, setPriority] = useState("1");
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -205,7 +205,7 @@ export default function RpcHealthPage() {
                 <select
                   className="h-8 w-full rounded-md border border-graphite-700 bg-graphite-800 px-3 text-[13px] text-graphite-100 focus:border-brand focus:outline-none"
                   value={network}
-                  onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM")}
+                  onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD")}
                 >
                   <option value="BASE">Base</option>
                   <option value="ETHEREUM">Ethereum</option>
@@ -282,7 +282,7 @@ export default function RpcHealthPage() {
               {endpoints.map((rpc) => (
                 <Panel key={rpc.endpointId} className="p-5">
                   <div className="flex items-center justify-between">
-                    <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-graphite-500">{rpc.network === "BASE" ? "Base" : "Ethereum"} · {priorityLabel(rpc.priority)}</p>
+                    <p className="text-[11px] font-medium uppercase tracking-[0.04em] text-graphite-500">{rpc.network === "BASE" ? "Base" : rpc.network === "ROBINHOOD" ? "Robinhood" : "Ethereum"} · {priorityLabel(rpc.priority)}</p>
                     <Activity className={statusColor(rpc.status)} size={14} />
                   </div>
                   <p className="mt-3 text-[15px] font-semibold text-graphite-100">{rpc.name}</p>
@@ -313,7 +313,7 @@ export default function RpcHealthPage() {
                       <tr key={rpc.endpointId}>
                         <td className="font-medium">{rpc.name}</td>
                         <td className="text-graphite-300">
-                          {rpc.network === "BASE" ? "Base" : "Ethereum"}
+                          {rpc.network === "BASE" ? "Base" : rpc.network === "ROBINHOOD" ? "Robinhood" : "Ethereum"}
                         </td>
                         <td className={`capitalize ${statusColor(rpc.status)}`}>
                           {rpc.status}

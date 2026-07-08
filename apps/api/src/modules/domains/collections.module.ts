@@ -32,12 +32,12 @@ class CollectionsController {
       const client = new OpenSeaClient({ apiKey: this.config.getOrThrow<string>("OPENSEA_API_KEY") });
       const drop = await client.scanDrop(body.url);
       const collection = await this.prisma.collection.upsert({
-        where: { slug_chain: { slug: drop.slug, chain: drop.chain === "base" ? "BASE" : "ETHEREUM" } },
+        where: { slug_chain: { slug: drop.slug, chain: drop.chain === "base" ? "BASE" : drop.chain === "robinhood" ? "ROBINHOOD" : "ETHEREUM" } },
         create: {
           slug: drop.slug,
           name: drop.name,
           imageUrl: drop.imageUrl,
-          chain: drop.chain === "base" ? "BASE" : "ETHEREUM",
+          chain: drop.chain === "base" ? "BASE" : drop.chain === "robinhood" ? "ROBINHOOD" : "ETHEREUM",
           contractAddress: drop.contractAddress,
           mintPriceWei: drop.phases[0]?.priceEth ? ethToWei(drop.phases[0].priceEth) : "0",
           supply: drop.supply,
@@ -132,9 +132,9 @@ class CollectionsController {
       throw new BadRequestException("Collection has no contract address. Rescan it first.");
     }
 
-    const network = collection.chain === "BASE" ? "base" : "ethereum";
+    const network = collection.chain === "BASE" ? "base" : collection.chain === "ROBINHOOD" ? "robinhood" : "ethereum";
     const rpcUrl = this.config.getOrThrow<string>(
-      network === "base" ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY"
+      network === "base" ? "BASE_RPC_PRIMARY" : network === "robinhood" ? "ROBINHOOD_RPC_PRIMARY" : "ETH_RPC_PRIMARY"
     );
 
     // ── Source 1: SeaDrop contract → getAllowListData ─────────────────────────
@@ -233,8 +233,8 @@ class ScanByContractDto {
   contractAddress!: string;
 
   @IsOptional()
-  @IsIn(["ethereum", "base"])
-  chain?: "ethereum" | "base";
+  @IsIn(["ethereum", "base", "robinhood"])
+  chain?: "ethereum" | "base" | "robinhood";
 }
 
 @Controller("collections")
@@ -252,18 +252,18 @@ class CollectionsByContractController {
       throw new BadRequestException("Enter a valid contract address (0x…).");
     }
 
-    const chain = (body.chain ?? "ethereum") as "ethereum" | "base";
+    const chain = (body.chain ?? "ethereum") as "ethereum" | "base" | "robinhood";
 
     try {
       const client = new OpenSeaClient({ apiKey: this.config.getOrThrow<string>("OPENSEA_API_KEY") });
       const drop = await client.scanDropByContract(normalized, chain);
       const collection = await this.prisma.collection.upsert({
-        where: { slug_chain: { slug: drop.slug, chain: chain === "base" ? "BASE" : "ETHEREUM" } },
+        where: { slug_chain: { slug: drop.slug, chain: chain === "base" ? "BASE" : chain === "robinhood" ? "ROBINHOOD" : "ETHEREUM" } },
         create: {
           slug: drop.slug,
           name: drop.name,
           imageUrl: drop.imageUrl,
-          chain: chain === "base" ? "BASE" : "ETHEREUM",
+          chain: chain === "base" ? "BASE" : chain === "robinhood" ? "ROBINHOOD" : "ETHEREUM",
           contractAddress: drop.contractAddress,
           mintPriceWei: drop.phases[0]?.priceEth ? ethToWei(drop.phases[0].priceEth) : "0",
           supply: drop.supply,

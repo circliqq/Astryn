@@ -36,7 +36,7 @@ interface SweepDetection {
 interface SweepAlert {
   id: string;
   collectionSlug: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   minItems: number;
   windowSeconds: number;
   enabled: boolean;
@@ -54,7 +54,7 @@ interface ProfileCollection {
 
 interface ProfileImportResult {
   walletAddress: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   collectionCount: number;
   collections: ProfileCollection[];
 }
@@ -89,7 +89,7 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
 }) {
   const [open, setOpen] = useState(false);
   const [profileUrl, setProfileUrl] = useState("");
-  const [network, setNetwork] = useState<"BASE" | "ETHEREUM">("ETHEREUM");
+  const [network, setNetwork] = useState<"BASE" | "ETHEREUM" | "ROBINHOOD">("ETHEREUM");
   const [minItems, setMinItems] = useState("5");
   const [windowSeconds, setWindowSeconds] = useState("60");
   const [profileResult, setProfileResult] = useState<ProfileImportResult | null>(null);
@@ -195,7 +195,7 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
             </label>
             <label>
               <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Network</span>
-              <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM")}>
+              <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD")}>
                 <option value="ETHEREUM">Ethereum</option>
                 <option value="BASE">Base</option>
               </Select>
@@ -349,7 +349,7 @@ function ProfileImportPanel({ existingSlugs, onImported }: {
 
 function CreateAlertForm({ onCreated }: { onCreated: () => void }) {
   const [slug, setSlug] = useState("");
-  const [network, setNetwork] = useState<"BASE" | "ETHEREUM">("ETHEREUM");
+  const [network, setNetwork] = useState<"BASE" | "ETHEREUM" | "ROBINHOOD">("ETHEREUM");
   const [minItems, setMinItems] = useState("5");
   const [windowSeconds, setWindowSeconds] = useState("60");
   const [formError, setFormError] = useState<string | null>(null);
@@ -404,7 +404,7 @@ function CreateAlertForm({ onCreated }: { onCreated: () => void }) {
             </label>
             <label>
               <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>Network</span>
-              <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM")}>
+              <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD")}>
                 <option value="ETHEREUM">Ethereum</option>
                 <option value="BASE">Base</option>
               </Select>
@@ -496,7 +496,7 @@ function AlertCard({ alert, onRefresh }: { alert: SweepAlert; onRefresh: () => v
               {alert.collectionSlug}
               <ExternalLink size={11} style={{ color: "var(--text-3)" }} />
             </a>
-            <Badge tone="blue">{alert.network === "ETHEREUM" ? "Ethereum" : "Base"}</Badge>
+            <Badge tone="blue">{alert.network === "ETHEREUM" ? "Ethereum" : alert.network === "ROBINHOOD" ? "Robinhood" : "Base"}</Badge>
             <Badge tone={alert.enabled ? "green" : "slate"}>{alert.enabled ? "Active" : "Paused"}</Badge>
           </div>
           <div className="mt-2 flex flex-wrap gap-4 text-[12px]" style={{ color: "var(--text-3)" }}>

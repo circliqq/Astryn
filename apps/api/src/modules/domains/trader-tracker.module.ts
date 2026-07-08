@@ -31,8 +31,8 @@ class AddTrackedWalletDto {
   @MaxLength(32)
   nickname!: string;
 
-  @IsIn(["BASE", "ETHEREUM"])
-  network!: "BASE" | "ETHEREUM";
+  @IsIn(["BASE", "ETHEREUM", "ROBINHOOD"])
+  network!: "BASE" | "ETHEREUM" | "ROBINHOOD";
 }
 
 class UpdateTrackedWalletDto {

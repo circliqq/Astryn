@@ -22,7 +22,7 @@ interface MintAlert {
   id: string;
   collectionSlug: string;
   collectionName: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   mintStartTime: string;
   alertMinutes: number[];
   firedMinutes: number[];
@@ -137,7 +137,7 @@ function AlertRow({ alert }: { alert: MintAlert }) {
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold" style={{ color: "var(--text-1)" }}>{alert.collectionName}</span>
             <span className="font-mono text-[11px]" style={{ color: "var(--text-3)" }}>{alert.collectionSlug}</span>
-            <Badge tone="blue">{alert.network === "ETHEREUM" ? "Ethereum" : "Base"}</Badge>
+            <Badge tone="blue">{alert.network === "ETHEREUM" ? "Ethereum" : alert.network === "ROBINHOOD" ? "Robinhood" : "Base"}</Badge>
             <Badge tone={alert.enabled ? "green" : "slate"}>
               {alert.enabled ? "Active" : "Paused"}
             </Badge>
@@ -226,7 +226,7 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [slug, setSlug]             = useState("");
   const [name, setName]             = useState("");
-  const [network, setNetwork]       = useState<"BASE" | "ETHEREUM">("ETHEREUM");
+  const [network, setNetwork]       = useState<"BASE" | "ETHEREUM" | "ROBINHOOD">("ETHEREUM");
   const [mintTime, setMintTime]     = useState("");
   const [selected, setSelected]     = useState<number[]>([60, 30, 15, 5]);
   const [formError, setFormError]   = useState<string | null>(null);
@@ -330,7 +330,7 @@ function AddAlertForm({ onCreated }: { onCreated: () => void }) {
               <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-2)" }}>Network</span>
               <Select
                 value={network}
-                onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM")}
+                onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD")}
               >
                 <option value="ETHEREUM">Ethereum</option>
                 <option value="BASE">Base</option>

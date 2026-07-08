@@ -13,9 +13,23 @@ import {
   type WalletClient
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
+import { defineChain } from "viem";
 import { base, baseSepolia, mainnet, sepolia } from "viem/chains";
 
-export type ChainName = "base" | "ethereum" | "base-sepolia" | "ethereum-sepolia";
+export type ChainName = "base" | "ethereum" | "robinhood" | "base-sepolia" | "ethereum-sepolia";
+
+/**
+ * Robinhood Chain — Ethereum L2 built on the Arbitrum Orbit stack.
+ * Mainnet launched 2026-07-01. ETH is the native gas token. ~100ms block times.
+ */
+export const robinhoodChain = defineChain({
+  id: 4663,
+  name: "Robinhood Chain",
+  nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
+  rpcUrls: {
+    default: { http: ["https://rpc.mainnet.chain.robinhood.com"] }
+  }
+});
 
 export interface BlockchainClientOptions {
   chainName: ChainName;
@@ -252,6 +266,7 @@ export function chainByName(chainName: ChainName): Chain {
   const chains: Record<ChainName, Chain> = {
     base,
     ethereum: mainnet,
+    robinhood: robinhoodChain,
     "base-sepolia": baseSepolia,
     "ethereum-sepolia": sepolia
   };
@@ -516,7 +531,7 @@ export async function sendRawTransaction(options: SendRawTransactionOptions, ser
 }
 
 function assertMainnetTransactionsEnabled(chainName: ChainName, action: string) {
-  if (chainName !== "base" && chainName !== "ethereum") return;
+  if (chainName !== "base" && chainName !== "ethereum" && chainName !== "robinhood") return;
 
   if (envFlag("MAINNET_TX_KILL_SWITCH") || envFlag("MAINNET_SIGNING_KILL_SWITCH")) {
     throw new Error(`Mainnet ${action} is blocked by the transaction kill switch.`);

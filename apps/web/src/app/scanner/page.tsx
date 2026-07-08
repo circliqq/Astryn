@@ -46,7 +46,7 @@ export default function ScannerPage() {
 
   // Contract address mode
   const [contractAddress, setContractAddress] = useState("");
-  const [chain, setChain] = useState<"ethereum" | "base">("ethereum");
+  const [chain, setChain] = useState<"ethereum" | "base" | "robinhood">("ethereum");
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -89,7 +89,7 @@ export default function ScannerPage() {
   }
 
   const phase = collection?.phases?.[0] ?? null;
-  const chainLabel = collection?.chain === "ETHEREUM" ? "Ethereum" : "Base";
+  const chainLabel = collection?.chain === "ETHEREUM" ? "Ethereum" : collection?.chain === "ROBINHOOD" ? "Robinhood" : "Base";
   const canScan = scanMode === "url" ? url.trim().length > 0 : contractAddress.trim().length > 0;
 
   return (
@@ -162,10 +162,11 @@ export default function ScannerPage() {
                   />
                   <Select
                     value={chain}
-                    onChange={(e) => setChain(e.target.value as "ethereum" | "base")}
+                    onChange={(e) => setChain(e.target.value as "ethereum" | "base" | "robinhood")}
                   >
                     <option value="ethereum">Ethereum</option>
                     <option value="base">Base</option>
+                    <option value="robinhood">Robinhood</option>
                   </Select>
                   <Button type="button" onClick={handleScan} disabled={loading || !canScan}>
                     {loading ? "Scanning..." : "Scan Drop"}
@@ -195,7 +196,7 @@ export default function ScannerPage() {
                       className="grid size-10 place-items-center rounded-md font-mono text-[13px] font-semibold"
                       style={{ border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-2)" }}
                     >
-                      {collection.chain === "BASE" ? "B" : "E"}
+                      {collection.chain === "BASE" ? "B" : collection.chain === "ROBINHOOD" ? "R" : "E"}
                     </div>
                     <div>
                       <h2 className="text-[18px] font-semibold" style={{ color: "var(--text-1)" }}>{collection.name}</h2>

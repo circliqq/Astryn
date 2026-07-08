@@ -1,4 +1,4 @@
-export const supportedNetworks = ["base", "ethereum"] as const;
+export const supportedNetworks = ["base", "ethereum", "robinhood"] as const;
 export type SupportedNetwork = (typeof supportedNetworks)[number];
 
 export const mintPhaseTypes = ["public", "allowlist", "gtd", "fcfs"] as const;

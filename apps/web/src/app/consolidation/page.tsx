@@ -30,7 +30,7 @@ interface WalletItem {
   id: string;
   name: string;
   address: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
 }
 
 interface WalletNftCollection {
@@ -44,7 +44,7 @@ interface ConsolidationRule {
   id: string;
   name: string;
   coldWallet: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   sourceWalletIds: string[];
   contractAddresses: string[];
   autoTrigger: boolean;
@@ -86,7 +86,7 @@ function timeAgo(iso: string) {
 
 // ── NFT preview inside wallet card ───────────────────────────────────────────
 
-function WalletNftPreview({ address, network }: { address: string; network: "BASE" | "ETHEREUM" }) {
+function WalletNftPreview({ address, network }: { address: string; network: "BASE" | "ETHEREUM" | "ROBINHOOD" }) {
   const { data, isLoading } = useQuery<WalletNftCollection[]>({
     queryKey: ["wallet-nfts", address, network],
     queryFn: () =>
@@ -166,7 +166,7 @@ function RuleCard({
         <div className="flex-1 min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-semibold text-graphite-100">{rule.name}</span>
-            <Badge tone="blue">{rule.network === "ETHEREUM" ? "Ethereum" : "Base"}</Badge>
+            <Badge tone="blue">{rule.network === "ETHEREUM" ? "Ethereum" : rule.network === "ROBINHOOD" ? "Robinhood" : "Base"}</Badge>
             <Badge tone={rule.enabled ? "green" : "slate"}>{rule.enabled ? "Active" : "Paused"}</Badge>
           </div>
           <p className="mt-0.5 text-[11px] text-graphite-500 truncate">
@@ -253,7 +253,7 @@ export default function ConsolidationPage() {
   // Form state
   const [name, setName] = useState("");
   const [coldWallet, setColdWallet] = useState("");
-  const [network, setNetwork] = useState<"BASE" | "ETHEREUM">("ETHEREUM");
+  const [network, setNetwork] = useState<"BASE" | "ETHEREUM" | "ROBINHOOD">("ETHEREUM");
   const [selectedWalletIds, setSelectedWalletIds] = useState<string[]>([]);
   const [expandedWalletId, setExpandedWalletId] = useState<string | null>(null);
   const [contracts, setContracts] = useState("");
@@ -384,7 +384,7 @@ export default function ConsolidationPage() {
                 </label>
                 <label>
                   <span className="mb-1 block text-[11px] font-medium text-graphite-400">Network</span>
-                  <Select value={network} onChange={(e) => { setNetwork(e.target.value as "BASE" | "ETHEREUM"); setSelectedWalletIds([]); }}>
+                  <Select value={network} onChange={(e) => { setNetwork(e.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD"); setSelectedWalletIds([]); }}>
                     <option value="ETHEREUM">Ethereum</option>
                     <option value="BASE">Base</option>
                   </Select>
@@ -406,7 +406,7 @@ export default function ConsolidationPage() {
               <div className="space-y-3">
                 <Step n={2} label="Choose source wallets to sweep from" done={step2Done} />
                 {networkWallets.length === 0 ? (
-                  <p className="notice text-[12px]">No wallets on {network === "ETHEREUM" ? "Ethereum" : "Base"}. Add wallets first.</p>
+                  <p className="notice text-[12px]">No wallets on {network === "ETHEREUM" ? "Ethereum" : network === "ROBINHOOD" ? "Robinhood" : "Base"}. Add wallets first.</p>
                 ) : (
                   <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
                     {networkWallets.map((wallet) => {

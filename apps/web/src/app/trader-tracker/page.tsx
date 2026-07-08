@@ -36,7 +36,7 @@ interface TraderPurchaseLog {
   trackedWallet?: {
     nickname: string;
     address: string;
-    network: "BASE" | "ETHEREUM";
+    network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   };
 }
 
@@ -44,7 +44,7 @@ interface TrackedWallet {
   id: string;
   address: string;
   nickname: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   enabled: boolean;
   lastCheckedAt: string | null;
   createdAt: string;
@@ -66,14 +66,14 @@ function shortAddr(address: string): string {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
 
-function explorerTxUrl(txHash: string, network: "BASE" | "ETHEREUM"): string {
+function explorerTxUrl(txHash: string, network: "BASE" | "ETHEREUM" | "ROBINHOOD"): string {
   if (network === "BASE") return `https://basescan.org/tx/${txHash}`;
   return `https://etherscan.io/tx/${txHash}`;
 }
 
 // ── Purchase Feed Item ─────────────────────────────────────────────────────────
 
-function PurchaseFeedItem({ log, network }: { log: TraderPurchaseLog; network: "BASE" | "ETHEREUM" }) {
+function PurchaseFeedItem({ log, network }: { log: TraderPurchaseLog; network: "BASE" | "ETHEREUM" | "ROBINHOOD" }) {
   const nickname = log.trackedWallet?.nickname ?? "Unknown";
   const addr = log.trackedWallet?.address ?? "";
   const net = log.trackedWallet?.network ?? network;
@@ -268,7 +268,7 @@ function WalletCard({ wallet, onRefresh }: { wallet: TrackedWallet; onRefresh: (
               {wallet.nickname}
             </span>
             <Badge tone={wallet.network === "ETHEREUM" ? "blue" : "slate"}>
-              {wallet.network === "ETHEREUM" ? "Ethereum" : "Base"}
+              {wallet.network === "ETHEREUM" ? "Ethereum" : wallet.network === "ROBINHOOD" ? "Robinhood" : "Base"}
             </Badge>
             {!wallet.enabled && <Badge tone="slate">Paused</Badge>}
           </div>
@@ -309,7 +309,7 @@ function AddWalletForm({ onAdded }: { onAdded: () => void }) {
   const [open, setOpen] = useState(false);
   const [address, setAddress] = useState("");
   const [nickname, setNickname] = useState("");
-  const [network, setNetwork] = useState<"BASE" | "ETHEREUM">("ETHEREUM");
+  const [network, setNetwork] = useState<"BASE" | "ETHEREUM" | "ROBINHOOD">("ETHEREUM");
   const [error, setError] = useState<string | null>(null);
 
   const mutation = useMutation({
@@ -375,7 +375,7 @@ function AddWalletForm({ onAdded }: { onAdded: () => void }) {
               <span className="mb-1 block text-[11px] font-medium" style={{ color: "var(--text-3)" }}>
                 Network
               </span>
-              <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM")}>
+              <Select value={network} onChange={(e) => setNetwork(e.target.value as "BASE" | "ETHEREUM" | "ROBINHOOD")}>
                 <option value="ETHEREUM">Ethereum</option>
                 <option value="BASE">Base</option>
               </Select>

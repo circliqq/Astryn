@@ -19,7 +19,7 @@ import { apiFetch } from "@/lib/api";
 
 interface ScannedDrop {
   id: string;
-  chain: "ETHEREUM" | "BASE";
+  chain: "ETHEREUM" | "BASE" | "ROBINHOOD";
   contractAddress: string;
   slug: string | null;
   name: string | null;
@@ -139,7 +139,7 @@ export default function LiveScannerPage() {
         method: "POST",
         body: JSON.stringify({
           contractAddress: d.contractAddress,
-          chain: d.chain === "BASE" ? "base" : "ethereum",
+          chain: d.chain === "BASE" ? "base" : d.chain === "ROBINHOOD" ? "robinhood" : "ethereum",
         }),
       });
       router.push(`/mint-setup?collectionId=${col.id}`);

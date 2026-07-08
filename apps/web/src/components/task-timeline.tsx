@@ -130,7 +130,7 @@ export function TaskTimeline({ tasks, onNavigate }: { tasks: TimelineTask[]; onN
                   )}
                 </td>
                 <td className="text-[12px] text-graphite-400">
-                  {task.collection?.chain === "BASE" ? "Base" : task.collection?.chain === "ETHEREUM" ? "Ethereum" : "—"}
+                  {task.collection?.chain === "BASE" ? "Base" : task.collection?.chain === "ETHEREUM" ? "Ethereum" : task.collection?.chain === "ROBINHOOD" ? "Robinhood" : "—"}
                 </td>
                 <td><Badge tone={bm.tone}>{bm.label}</Badge></td>
                 <td><TaskStepper status={task.status} /></td>

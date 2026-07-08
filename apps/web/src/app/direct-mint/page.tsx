@@ -55,7 +55,7 @@ interface Wallet {
   id: string;
   name: string;
   address: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   status: string;
 }
 
@@ -75,8 +75,8 @@ function shortAddr(addr: string) {
   return `${addr.slice(0, 8)}…${addr.slice(-4)}`;
 }
 
-function chainToNetwork(chain: "ethereum" | "base"): "ETHEREUM" | "BASE" {
-  return chain === "base" ? "BASE" : "ETHEREUM";
+function chainToNetwork(chain: "ethereum" | "base" | "robinhood"): "ETHEREUM" | "BASE" | "ROBINHOOD" {
+  return chain === "base" ? "BASE" : chain === "robinhood" ? "ROBINHOOD" : "ETHEREUM";
 }
 
 function statusColor(status: string) {
@@ -95,7 +95,7 @@ export default function DirectMintPage() {
 
   // Step 1 — contract
   const [contractAddress, setContractAddress] = useState("");
-  const [chain, setChain] = useState<"ethereum" | "base">("ethereum");
+  const [chain, setChain] = useState<"ethereum" | "base" | "robinhood">("ethereum");
   const [abiFetchResult, setAbiFetchResult] = useState<AbiFetchResult | null>(null);
   const [abiFetchError, setAbiFetchError] = useState<string | null>(null);
   const [abiFetching, setAbiFetching] = useState(false);
@@ -313,11 +313,12 @@ export default function DirectMintPage() {
                   />
                   <select
                     value={chain}
-                    onChange={(e) => setChain(e.target.value as "ethereum" | "base")}
+                    onChange={(e) => setChain(e.target.value as "ethereum" | "base" | "robinhood")}
                     className="rounded-md border border-graphite-700 bg-graphite-800 px-3 py-2 text-[13px] text-graphite-100 focus:border-brand focus:outline-none"
                   >
                     <option value="ethereum">Ethereum</option>
                     <option value="base">Base</option>
+                    <option value="robinhood">Robinhood</option>
                   </select>
                   <Button
                     type="button"
@@ -460,7 +461,7 @@ export default function DirectMintPage() {
                 <div className="grid gap-2 p-5 md:grid-cols-2 xl:grid-cols-3">
                   {compatibleWallets.length === 0 ? (
                     <p className="notice md:col-span-2 xl:col-span-3">
-                      No {chain === "base" ? "Base" : "Ethereum"} wallets found.
+                      No {chain === "base" ? "Base" : chain === "robinhood" ? "Robinhood" : "Ethereum"} wallets found.
                     </p>
                   ) : (
                     compatibleWallets.map((wallet) => {

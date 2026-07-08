@@ -58,8 +58,8 @@ export async function processDirectMintJob(
     },
   });
 
-  const network = task.chain === "BASE" ? "base" : "ethereum";
-  const chainName = network as "base" | "ethereum";
+  const network = task.chain === "BASE" ? "base" : task.chain === "ROBINHOOD" ? "robinhood" : "ethereum";
+  const chainName = network as "base" | "ethereum" | "robinhood";
   const rpcUrls = rpcUrlsFor(chainName);
   const primaryRpc = await fastestRpcUrl(chainName, rpcUrls);
 
@@ -289,8 +289,8 @@ function coerceArgs(fn: AbiFunction, args: unknown[]): unknown[] {
   });
 }
 
-function rpcUrlsFor(network: "base" | "ethereum"): string[] {
-  const prefix = network === "base" ? "BASE" : "ETH";
+function rpcUrlsFor(network: "base" | "ethereum" | "robinhood"): string[] {
+  const prefix = network === "base" ? "BASE" : network === "robinhood" ? "ROBINHOOD" : "ETH";
   return [
     process.env[`${prefix}_RPC_PRIMARY`],
     process.env[`${prefix}_RPC_BACKUP_1`],
@@ -308,7 +308,7 @@ function rawError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function fastestRpcUrl(chainName: "base" | "ethereum", urls: string[]) {
+async function fastestRpcUrl(chainName: "base" | "ethereum" | "robinhood", urls: string[]) {
   if (urls.length <= 1) return urls[0];
   const checks = await Promise.all(
     urls.map(async (url) => {

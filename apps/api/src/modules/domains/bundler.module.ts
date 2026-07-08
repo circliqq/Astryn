@@ -90,7 +90,7 @@ class BundlerController {
 
   private async submitBundle(
     bundleId: string,
-    network: "BASE" | "ETHEREUM",
+    network: "BASE" | "ETHEREUM" | "ROBINHOOD",
     signedTxs: string[],
     targetBlock?: string,
   ) {
@@ -134,9 +134,9 @@ class BundlerController {
         bundleHash = data.result?.bundleHash ?? null;
 
       } else {
-        // Base: OP Stack sequencer — eth_sendBundle is not supported.
+        // Base / Robinhood: L2 sequencers — eth_sendBundle is not supported.
         // Fastest landing = parallel eth_sendRawTransaction to multiple
-        // well-connected Base endpoints so the sequencer sees the tx ASAP.
+        // well-connected endpoints so the sequencer sees the tx ASAP.
         const BASE_FAST_ENDPOINTS = [
           "https://mainnet.base.org",           // official Base RPC
           "https://base.publicnode.com",         // PublicNode
@@ -144,10 +144,19 @@ class BundlerController {
           "https://1rpc.io/base",                // 1RPC
           "https://rpc.flashbots.net/fast",      // Flashbots Protect (Base-aware)
         ];
+        // Robinhood Chain (Arbitrum Orbit): centralized sequencer — official RPC
+        // plus any configured backups.
+        const ROBINHOOD_FAST_ENDPOINTS = [
+          "https://rpc.mainnet.chain.robinhood.com",
+          this.config.get<string>("ROBINHOOD_RPC_PRIMARY"),
+          this.config.get<string>("ROBINHOOD_RPC_BACKUP_1"),
+        ].filter((url, i, arr): url is string => Boolean(url) && arr.indexOf(url) === i);
+
+        const endpoints = network === "ROBINHOOD" ? ROBINHOOD_FAST_ENDPOINTS : BASE_FAST_ENDPOINTS;
 
         const results = await Promise.allSettled(
           signedTxs.flatMap((tx) =>
-            BASE_FAST_ENDPOINTS.map(async (url) => {
+            endpoints.map(async (url) => {
               const res = await fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -168,7 +177,7 @@ class BundlerController {
         bundleHash = firstHash?.status === "fulfilled" ? firstHash.value : null;
 
         if (results.every((r) => r.status === "rejected")) {
-          throw new Error("All Base RPC endpoints rejected the transaction.");
+          throw new Error(`All ${network === "ROBINHOOD" ? "Robinhood" : "Base"} RPC endpoints rejected the transaction.`);
         }
       }
 

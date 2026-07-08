@@ -14,8 +14,8 @@ class RpcEndpointDto {
   @IsString()
   url!: string;
 
-  @IsIn(["BASE", "ETHEREUM"])
-  network!: "BASE" | "ETHEREUM";
+  @IsIn(["BASE", "ETHEREUM", "ROBINHOOD"])
+  network!: "BASE" | "ETHEREUM" | "ROBINHOOD";
 
   @IsNumber()
   @Min(1)
@@ -50,7 +50,7 @@ class RpcController {
         id: endpoint.id,
         name: endpoint.name,
         url: endpoint.url,
-        chainName: endpoint.network === "BASE" ? "base" : "ethereum",
+        chainName: endpoint.network === "BASE" ? "base" : endpoint.network === "ROBINHOOD" ? "robinhood" : "ethereum",
         priority: endpoint.priority
       }))
     );
@@ -99,11 +99,11 @@ class RpcController {
         id: endpoint.id,
         name: endpoint.name,
         url: endpoint.url,
-        chainName: endpoint.network === "BASE" ? "base" : "ethereum",
+        chainName: endpoint.network === "BASE" ? "base" : endpoint.network === "ROBINHOOD" ? "robinhood" : "ethereum",
         priority: endpoint.priority
       }
     ]);
-    return pool.checkEndpoint(pool.endpointsFor(endpoint.network === "BASE" ? "base" : "ethereum")[0]);
+    return pool.checkEndpoint(pool.endpointsFor(endpoint.network === "BASE" ? "base" : endpoint.network === "ROBINHOOD" ? "robinhood" : "ethereum")[0]);
   }
 }
 

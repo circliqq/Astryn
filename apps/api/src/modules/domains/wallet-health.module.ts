@@ -28,9 +28,11 @@ class WalletHealthController {
 
     const results = [];
     for (const wallet of wallets) {
-      const isBase = wallet.network === "BASE";
-      const rpcUrl = this.config.getOrThrow<string>(isBase ? "BASE_RPC_PRIMARY" : "ETH_RPC_PRIMARY");
-      const chainName = isBase ? "base" : "ethereum";
+      const chainName =
+        wallet.network === "BASE" ? "base" : wallet.network === "ROBINHOOD" ? "robinhood" : "ethereum";
+      const rpcKey =
+        chainName === "base" ? "BASE_RPC_PRIMARY" : chainName === "robinhood" ? "ROBINHOOD_RPC_PRIMARY" : "ETH_RPC_PRIMARY";
+      const rpcUrl = this.config.getOrThrow<string>(rpcKey);
       const [balanceWei, nonce] = await Promise.all([
         getBalance({ chainName, rpcUrl }, wallet.address as `0x${string}`),
         getNonce({ chainName, rpcUrl }, wallet.address as `0x${string}`)

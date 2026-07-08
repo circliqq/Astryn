@@ -52,8 +52,8 @@ interface GasChartProps {
   priorityGwei: number | null;
   maxFeeGwei: number | null;
   gasLevel: "Low" | "Medium" | "High" | null;
-  network: "base" | "ethereum";
-  onNetworkChange: (n: "base" | "ethereum") => void;
+  network: "base" | "ethereum" | "robinhood";
+  onNetworkChange: (n: "base" | "ethereum" | "robinhood") => void;
 }
 
 export function GasChart({ currentGwei, priorityGwei, maxFeeGwei, gasLevel, network, onNetworkChange }: GasChartProps) {
@@ -98,7 +98,7 @@ export function GasChart({ currentGwei, priorityGwei, maxFeeGwei, gasLevel, netw
           )}
           {/* Network toggle */}
           <div className="flex overflow-hidden rounded border border-graphite-700 text-[11px]">
-            {(["base", "ethereum"] as const).map((n) => (
+            {(["base", "ethereum", "robinhood"] as const).map((n) => (
               <button
                 key={n}
                 type="button"

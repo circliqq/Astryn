@@ -11,7 +11,7 @@ interface Wallet {
   id: string;
   name: string;
   address: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   status: string;
   lastBalanceWei: string | null;
 }
@@ -33,7 +33,7 @@ export function WalletTable({ search, status }: { search: string; status: string
   const queryClient = useQueryClient();
   const [editingWallet, setEditingWallet] = useState<Wallet | null>(null);
   const [editName, setEditName] = useState("");
-  const [editNetwork, setEditNetwork] = useState<"base" | "ethereum">("base");
+  const [editNetwork, setEditNetwork] = useState<"base" | "ethereum" | "robinhood">("base");
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -48,7 +48,7 @@ export function WalletTable({ search, status }: { search: string; status: string
   });
 
   const updateWallet = useMutation({
-    mutationFn: (payload: { id: string; name: string; network: "base" | "ethereum" }) =>
+    mutationFn: (payload: { id: string; name: string; network: "base" | "ethereum" | "robinhood" }) =>
       apiFetch<Wallet>(`/wallets/${payload.id}`, {
         method: "PATCH",
         body: JSON.stringify({
@@ -101,7 +101,7 @@ export function WalletTable({ search, status }: { search: string; status: string
   function openEdit(wallet: Wallet) {
     setEditingWallet(wallet);
     setEditName(wallet.name);
-    setEditNetwork(wallet.network === "BASE" ? "base" : "ethereum");
+    setEditNetwork(wallet.network === "BASE" ? "base" : wallet.network === "ROBINHOOD" ? "robinhood" : "ethereum");
     setNotice(null);
     setActionError(null);
   }
@@ -183,7 +183,7 @@ export function WalletTable({ search, status }: { search: string; status: string
                     <td className="font-medium">{wallet.name}</td>
                     <td className="font-mono text-[11px]" style={{ color: "var(--text-3)" }} data-wallet-address>{wallet.address}</td>
                     <td style={{ color: "var(--text-2)" }}>
-                      {wallet.network === "BASE" ? "Base" : "Ethereum"}
+                      {wallet.network === "BASE" ? "Base" : wallet.network === "ROBINHOOD" ? "Robinhood" : "Ethereum"}
                     </td>
                     <td data-wallet-balance>{fmtEth(wallet.lastBalanceWei)}</td>
                     <td>
@@ -242,7 +242,7 @@ export function WalletTable({ search, status }: { search: string; status: string
                 <h2 className="font-semibold">Edit Wallet</h2>
                 <p className="mt-1 font-mono text-xs" style={{ color: "var(--text-3)" }} data-wallet-address>{editingWallet.address}</p>
               </div>
-              <Badge tone="blue">{editingWallet.network === "BASE" ? "Base" : "Ethereum"}</Badge>
+              <Badge tone="blue">{editingWallet.network === "BASE" ? "Base" : editingWallet.network === "ROBINHOOD" ? "Robinhood" : "Ethereum"}</Badge>
             </div>
             <form className="mt-5 space-y-4" onSubmit={handleEditSubmit}>
               <Input
@@ -254,10 +254,11 @@ export function WalletTable({ search, status }: { search: string; status: string
               />
               <Select
                 value={editNetwork}
-                onChange={(e) => setEditNetwork(e.target.value as "base" | "ethereum")}
+                onChange={(e) => setEditNetwork(e.target.value as "base" | "ethereum" | "robinhood")}
               >
                 <option value="base">Base</option>
                 <option value="ethereum">Ethereum</option>
+                <option value="robinhood">Robinhood</option>
               </Select>
               {actionError && <p className="text-[12px] text-status-red-text">{actionError}</p>}
               <div className="flex justify-end gap-2">

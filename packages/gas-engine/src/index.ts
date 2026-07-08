@@ -47,9 +47,12 @@ const MODE_FACTORS: Record<GasMode, { base: number; priority: number; cap: numbe
 
 // Absolute minimum priority fee per network per mode (in gwei).
 // Kept very small — only kicks in when mempool is empty (live priority ≈ 0).
-const MIN_PRIORITY_GWEI: Record<"ethereum" | "base", Record<GasMode, number>> = {
+const MIN_PRIORITY_GWEI: Record<"ethereum" | "base" | "robinhood", Record<GasMode, number>> = {
   ethereum: { safe: 0.01, balanced: 0.05, aggressive: 0.1  },
   base:     { safe: 0.0005, balanced: 0.001, aggressive: 0.002 },
+  // Robinhood Chain (Arbitrum Orbit L2): priority fee is effectively unused
+  // (first-come-first-served sequencer ordering) — keep floors near zero.
+  robinhood: { safe: 0.0001, balanced: 0.0005, aggressive: 0.001 },
 };
 
 /**
@@ -119,7 +122,7 @@ export async function fetchCurrentGas(options: BlockchainClientOptions) {
 export function resolveGasFees(
   current: GasFeeQuote,
   settings: GasSettings,
-  network: "ethereum" | "base" = "ethereum"
+  network: "ethereum" | "base" | "robinhood" = "ethereum"
 ): ResolvedGasFees {
   const factors = MODE_FACTORS[settings.mode];
   const minPriority = MIN_PRIORITY_GWEI[network][settings.mode];

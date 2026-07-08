@@ -38,18 +38,19 @@ const ERC721_META_ABI = [
 ] as const;
 
 // Approx blocks in a 5-minute window per chain (ETH ~12s, Base ~2s).
-const BLOCKS_5M: Record<"ethereum" | "base", bigint> = { ethereum: 25n, base: 150n };
+const BLOCKS_5M: Record<"ethereum" | "base" | "robinhood", bigint> = { ethereum: 25n, base: 150n, robinhood: 3000n };
 // Max live drops to refresh metrics for per cycle (limits RPC + OpenSea load).
 const MAX_LIVE_REFRESH = 40;
 
 interface ChainScan {
   network: Network;
-  chainName: "ethereum" | "base";
+  chainName: "ethereum" | "base" | "robinhood";
 }
 
 const CHAINS: ChainScan[] = [
   { network: "ETHEREUM", chainName: "ethereum" },
   { network: "BASE", chainName: "base" },
+  { network: "ROBINHOOD", chainName: "robinhood" },
 ];
 
 export async function scanDrops(prisma: PrismaClient): Promise<{ found: number }> {
@@ -178,7 +179,7 @@ async function readOnchainMeta(
 
 async function computeVelocity(
   client: ScanClient,
-  chainName: "ethereum" | "base",
+  chainName: "ethereum" | "base" | "robinhood",
   contract: Address,
 ): Promise<{ mints5m: number; minters5m: number }> {
   try {
@@ -216,7 +217,7 @@ async function refreshLiveMetrics(prisma: PrismaClient, openSea: OpenSeaClient):
   }
 
   const clients = new Map<string, ScanClient>();
-  const clientFor = async (chainName: "ethereum" | "base"): Promise<ScanClient | null> => {
+  const clientFor = async (chainName: "ethereum" | "base" | "robinhood"): Promise<ScanClient | null> => {
     if (clients.has(chainName)) return clients.get(chainName)!;
     const picked = await pickClient(prisma, chainName);
     if (!picked) return null;
@@ -225,7 +226,7 @@ async function refreshLiveMetrics(prisma: PrismaClient, openSea: OpenSeaClient):
   };
 
   for (const d of live) {
-    const chainName = d.chain === "BASE" ? "base" : "ethereum";
+    const chainName = d.chain === "BASE" ? "base" : d.chain === "ROBINHOOD" ? "robinhood" : "ethereum";
     const client = await clientFor(chainName);
     if (!client) continue;
     const contract = getAddress(d.contractAddress);
@@ -264,7 +265,7 @@ async function refreshLiveMetrics(prisma: PrismaClient, openSea: OpenSeaClient):
 
 interface DropInput {
   network: Network;
-  chainName: "ethereum" | "base";
+  chainName: "ethereum" | "base" | "robinhood";
   contract: Address;
   startMs: number;
   endMs: number;
@@ -501,7 +502,7 @@ async function upsertCursor(prisma: PrismaClient, chain: Network, block: bigint)
 
 // getLogs-friendly public RPCs (free, generous log ranges — unlike Alchemy free
 // which caps eth_getLogs at 10 blocks). Tried first for the scanner.
-const CURATED_RPCS: Record<"ethereum" | "base", string[]> = {
+const CURATED_RPCS: Record<"ethereum" | "base" | "robinhood", string[]> = {
   ethereum: [
     "https://ethereum.publicnode.com",
     "https://eth.llamarpc.com",
@@ -514,10 +515,13 @@ const CURATED_RPCS: Record<"ethereum" | "base", string[]> = {
     "https://base.drpc.org",
     "https://mainnet.base.org",
   ],
+  robinhood: [
+    "https://rpc.mainnet.chain.robinhood.com",
+  ],
 };
 
-function envRpcsFor(network: "base" | "ethereum"): string[] {
-  const prefix = network === "base" ? "BASE" : "ETH";
+function envRpcsFor(network: "base" | "ethereum" | "robinhood"): string[] {
+  const prefix = network === "base" ? "BASE" : network === "robinhood" ? "ROBINHOOD" : "ETH";
   return [
     process.env[`${prefix}_RPC_PRIMARY`],
     process.env[`${prefix}_RPC_BACKUP_1`],
@@ -526,8 +530,8 @@ function envRpcsFor(network: "base" | "ethereum"): string[] {
 }
 
 /** Ordered RPC candidates: curated getLogs-friendly first, then DB + env. */
-async function candidateUrls(prisma: PrismaClient, chainName: "ethereum" | "base"): Promise<string[]> {
-  const network: Network = chainName === "base" ? "BASE" : "ETHEREUM";
+async function candidateUrls(prisma: PrismaClient, chainName: "ethereum" | "base" | "robinhood"): Promise<string[]> {
+  const network: Network = chainName === "base" ? "BASE" : chainName === "robinhood" ? "ROBINHOOD" : "ETHEREUM";
   let dbUrls: string[] = [];
   try {
     const eps = await prisma.rpcEndpoint.findMany({
@@ -546,7 +550,7 @@ async function candidateUrls(prisma: PrismaClient, chainName: "ethereum" | "base
 /** First RPC whose getBlockNumber responds — used for on-chain reads/velocity. */
 async function pickClient(
   prisma: PrismaClient,
-  chainName: "ethereum" | "base",
+  chainName: "ethereum" | "base" | "robinhood",
 ): Promise<{ client: ScanClient; latest: bigint } | null> {
   for (const rpcUrl of await candidateUrls(prisma, chainName)) {
     try {
@@ -563,7 +567,7 @@ async function pickClient(
 /** Run getLogs across candidate RPCs until one accepts the block range. */
 async function getLogsAcrossRpcs(
   urls: string[],
-  chainName: "ethereum" | "base",
+  chainName: "ethereum" | "base" | "robinhood",
   fromBlock: bigint,
   toBlock: bigint,
 ): Promise<unknown[] | null> {

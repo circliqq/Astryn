@@ -21,7 +21,7 @@ interface PortfolioItem {
   collectionSlug: string;
   imageUrl: string | null;
   walletName: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   estimatedValueEth: number | null;
   acquiredAt: string | null;
 }
@@ -103,7 +103,7 @@ export default function PortfolioPage() {
                           <p className="truncate text-[13px] font-semibold" style={{ color: "var(--text-1)" }}>{item.collectionName}</p>
                           <p className="mt-0.5 font-mono text-[11px]" style={{ color: "var(--text-3)" }}>#{item.tokenId}</p>
                         </div>
-                        <Badge tone={item.network === "BASE" ? "blue" : "slate"}>{item.network === "BASE" ? "Base" : "Ethereum"}</Badge>
+                        <Badge tone={item.network === "BASE" ? "blue" : "slate"}>{item.network === "BASE" ? "Base" : item.network === "ROBINHOOD" ? "Robinhood" : "Ethereum"}</Badge>
                       </div>
                       <div className="mt-3 grid grid-cols-2 gap-2 text-[12px]">
                         <div><p className="label-caps">Wallet</p><p className="mt-1" style={{ color: "var(--text-2)" }}>{item.walletName}</p></div>

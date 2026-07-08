@@ -97,7 +97,7 @@ function Row({ label, eth, usd, highlight }: { label: string; eth: string; usd: 
 
 export default function GasCalculatorPage() {
   // Inputs
-  const [network,       setNetwork]       = useState<"base" | "ethereum">("ethereum");
+  const [network,       setNetwork]       = useState<"base" | "ethereum" | "robinhood">("ethereum");
   const [contractIdx,   setContractIdx]   = useState(0);
   const [customUnits,   setCustomUnits]   = useState("350000");
   const [walletCount,   setWalletCount]   = useState("8");
@@ -313,9 +313,10 @@ export default function GasCalculatorPage() {
             <div className="metric-card">
               <p className="label-caps">Network</p>
               <div className="mt-2">
-                <Select value={network} onChange={e => setNetwork(e.target.value as "base" | "ethereum")}>
+                <Select value={network} onChange={e => setNetwork(e.target.value as "base" | "ethereum" | "robinhood")}>
                   <option value="ethereum">Ethereum</option>
                   <option value="base">Base</option>
+                  <option value="robinhood">Robinhood</option>
                 </Select>
               </div>
             </div>

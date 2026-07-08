@@ -11,6 +11,7 @@ datasource db {
 enum Network {
   BASE
   ETHEREUM
+  ROBINHOOD
 }
 
 enum SubscriptionPlan {

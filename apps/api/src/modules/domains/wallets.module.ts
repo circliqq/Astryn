@@ -17,8 +17,8 @@ class ImportWalletDto {
   @IsString()
   privateKey!: string;
 
-  @IsIn(["base", "ethereum"])
-  network!: "base" | "ethereum";
+  @IsIn(["base", "ethereum", "robinhood"])
+  network!: "base" | "ethereum" | "robinhood";
 }
 
 class BulkImportWalletDto {
@@ -32,8 +32,8 @@ class CreateWalletDto {
   @IsString()
   name!: string;
 
-  @IsIn(["base", "ethereum"])
-  network!: "base" | "ethereum";
+  @IsIn(["base", "ethereum", "robinhood"])
+  network!: "base" | "ethereum" | "robinhood";
 }
 
 class UpdateWalletDto {
@@ -42,8 +42,8 @@ class UpdateWalletDto {
   name?: string;
 
   @IsOptional()
-  @IsIn(["base", "ethereum"])
-  network?: "base" | "ethereum";
+  @IsIn(["base", "ethereum", "robinhood"])
+  network?: "base" | "ethereum" | "robinhood";
 }
 
 const networkMap = {
@@ -91,11 +91,13 @@ class WalletsController {
   private rpcUrlForNetwork(network: SafeWallet["network"]) {
     return network === "BASE"
       ? this.config.getOrThrow<string>("BASE_RPC_PRIMARY")
-      : this.config.getOrThrow<string>("ETH_RPC_PRIMARY");
+      : network === "ROBINHOOD"
+        ? this.config.getOrThrow<string>("ROBINHOOD_RPC_PRIMARY")
+        : this.config.getOrThrow<string>("ETH_RPC_PRIMARY");
   }
 
   private chainNameForNetwork(network: SafeWallet["network"]) {
-    return network === "BASE" ? "base" : "ethereum";
+    return network === "BASE" ? "base" : network === "ROBINHOOD" ? "robinhood" : "ethereum";
   }
 
   private needsBalanceRefresh(wallet: SafeWallet) {
@@ -234,7 +236,7 @@ class WalletsController {
         ? this.config.getOrThrow<string>("BASE_RPC_PRIMARY")
         : this.config.getOrThrow<string>("ETH_RPC_PRIMARY");
     const balanceWei = await getBalance(
-      { chainName: wallet.network === "BASE" ? "base" : "ethereum", rpcUrl },
+      { chainName: wallet.network === "BASE" ? "base" : wallet.network === "ROBINHOOD" ? "robinhood" : "ethereum", rpcUrl },
       wallet.address as `0x${string}`
     );
     await this.prisma.wallet.update({ where: { id }, data: { lastBalanceWei: balanceWei.toString() } });

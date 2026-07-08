@@ -55,7 +55,7 @@ interface Wallet {
   id: string;
   name: string;
   address: string;
-  network: "BASE" | "ETHEREUM";
+  network: "BASE" | "ETHEREUM" | "ROBINHOOD";
   status: string;
 }
 
@@ -73,7 +73,7 @@ interface Collection {
   id: string;
   name: string;
   slug: string;
-  chain: "BASE" | "ETHEREUM";
+  chain: "BASE" | "ETHEREUM" | "ROBINHOOD";
   contractAddress: string;
   imageUrl: string | null;
   phases: CollectionPhase[];
@@ -580,7 +580,7 @@ function MintSetupContent() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-[13px] font-semibold text-graphite-100">{collection.name}</span>
-                      <Badge tone="blue">{collection.chain === "BASE" ? "Base" : "Ethereum"}</Badge>
+                      <Badge tone="blue">{collection.chain === "BASE" ? "Base" : collection.chain === "ROBINHOOD" ? "Robinhood" : "Ethereum"}</Badge>
                     </div>
                     <p className="font-mono text-[10px] text-graphite-500">{collection.contractAddress.slice(0, 18)}…</p>
                   </div>

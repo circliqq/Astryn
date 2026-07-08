@@ -31,8 +31,8 @@ class CreateMintAlertDto {
   @IsString()
   collectionName!: string;
 
-  @IsIn(["BASE", "ETHEREUM"])
-  network!: "BASE" | "ETHEREUM";
+  @IsIn(["BASE", "ETHEREUM", "ROBINHOOD"])
+  network!: "BASE" | "ETHEREUM" | "ROBINHOOD";
 
   @IsISO8601()
   mintStartTime!: string;
